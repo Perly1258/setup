@@ -1,8 +1,9 @@
 #!/bin/bash
 # Exit immediately if a command exits with a non-zero status.
-set -euxo pipefail # Use this line for debugging, otherwise use 'set -e'
+# Use 'set -euxo pipefail' (uncommented) for detailed debugging output if issues persist.
+set -e
 
-# --- User-Defined Environment Variables ---
+# --- User-Defined Environment Variables (Set in Vast.ai Console) ---
 PG_DATA_PATH="/workspace/postgres_data"
 PG_USER="vast_user"
 PG_DB="vast_project_db"
@@ -17,16 +18,11 @@ fi
 SQL_INIT_URL="[YOUR_RAW_URL_TO_INIT_DATA.SQL]"
 LOCAL_SQL_FILE="/tmp/init_data.sql"
 
-# --- 1. Dependencies and Path Setup ---
-echo "--- 1. Installing Dependencies and Determining Paths ---"
+# --- 1. System Update and Core Dependency Installation ---
+echo "--- 1. Installing System Dependencies and Build Tools ---"
 cd /workspace
 apt-get update
 apt-get install -y --no-install-recommends python3-venv git postgresql postgresql-contrib postgresql-server-dev-all build-essential make cmake poppler-utils libpq-dev 
-
-# FIX: Dynamically find the correct PostgreSQL binary path (e.g., /usr/lib/postgresql/16/bin)
-PG_FULL_VERSION=$(dpkg-query -W -f='${Version}' postgresql)
-PG_VERSION=$(echo "$PG_FULL_VERSION" | sed 's/\([0-9]*\).*/\1/')
-PG_BIN_DIR="/usr/lib/postgresql/$PG_VERSION/bin"
 
 # --- 2. POSTGRESQL SETUP (Initialization, Start, and pgvector install) ---
 echo "--- 2. Setting up PostgreSQL and pgvector ---"
@@ -35,10 +31,22 @@ mkdir -p "$PG_DATA_PATH"
 if [ ! -f "$PG_DATA_PATH/PG_VERSION" ]; then
     echo "Initializing new PostgreSQL cluster in $PG_DATA_PATH."
     
-    /usr/sbin/pg_dropcluster --stop "$PG_VERSION" main || true # Stop default cluster
+    # Get the installed PostgreSQL major version (e.g., '16')
+    PG_FULL_VERSION=$(dpkg-query -W -f='${Version}' postgresql)
+    PG_VERSION=$(echo "$PG_FULL_VERSION" | sed 's/\([0-9]*\).*/\1/')
+    PG_BIN_DIR="/usr/lib/postgresql/$PG_VERSION/bin"
     
-    # Initialization using the FIXED version-specific path
-    sudo -u postgres "$PG_BIN_DIR/initdb" -D "$PG_DATA_PATH" --locale C --encoding UTF8
+    # 1. Temporarily stop the default cluster that APT might have auto-started
+    /usr/sbin/pg_dropcluster --stop "$PG_VERSION" main || true
+
+    # CRITICAL FIX: Change directory ownership to postgres user (Fixes "Operation not permitted")
+    echo "Fixing permissions on persistent data directory..."
+    chown -R postgres:postgres "$PG_DATA_PATH"
+    
+    # 2. Initialize the cluster using the persistent data path (FIXED PATH and OWNER)
+    echo "Running initdb using $PG_BIN_DIR/initdb"
+    sudo -u postgres "$PG_BIN_DIR/initdb" -D "$PG_DATA_PATH" \
+        --locale C --encoding UTF8
 
     export PGPASSWORD="$PG_PASSWORD"
 
@@ -46,59 +54,52 @@ if [ ! -f "$PG_DATA_PATH/PG_VERSION" ]; then
     /usr/bin/pg_ctl -D "$PG_DATA_PATH" -o "-k /tmp" -l /tmp/postgres.log start
 
     # --- Install pgvector from source ---
+    echo "Installing and compiling pgvector extension..."
     git clone --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector
     cd /tmp/pgvector
-    make clean && make && make install
+    make clean
+    make && make install
 
-    # --- Create User, Database, and Enable pgvector (using $PG_BIN_DIR for precision) ---
+    # --- Create User, Database, and Enable pgvector ---
+    echo "Creating user ($PG_USER), database ($PG_DB), and enabling extension..."
+
+    # Use version-specific binaries for precision
     sudo -u postgres "$PG_BIN_DIR/createuser" --createdb --login --pwprompt "$PG_USER" <<EOF
 $PG_PASSWORD
 $PG_PASSWORD
 EOF
     sudo -u postgres "$PG_BIN_DIR/createdb" -O "$PG_USER" "$PG_DB"
+    
+    # Enable the pgvector extension 
     /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -c "CREATE EXTENSION vector;"
 
     # --- Initialize Database Schema and Data ---
-    wget -O "$LOCAL_SQL_FILE" "$SQL_INIT_URL" # Download SQL data
-    /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -f "$LOCAL_SQL_FILE" # Execute SQL
-
+    echo "Downloading and executing database schema and sample data from: $SQL_INIT_URL"
+    
+    wget -O "$LOCAL_SQL_FILE" "$SQL_INIT_URL"
+    
+    /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -f "$LOCAL_SQL_FILE"
+    
     echo "Stopping PostgreSQL service. Will be restarted by /root/onstart.sh."
     /usr/bin/pg_ctl -D "$PG_DATA_PATH" stop
+    
     unset PGPASSWORD
 else
     echo "PostgreSQL cluster already initialized. Skipping setup and compilation."
 fi
 
-# --- 3. PYTHON VENV and RAG Tools ---
+# --- 3. PYTHON VENV AND PACKAGE INSTALLATION ---
 echo "--- 3. Setting up Python Virtual Environment and RAG Tools ---"
 VENV_PATH="/workspace/mistral_env"
 mkdir -p "$VENV_PATH"
-[ ! -f "$VENV_PATH/bin/activate" ] && python3 -m venv "$VENV_PATH"
+
+if [ ! -f "$VENV_PATH/bin/activate" ]; then
+    echo "Creating Python Virtual Environment: $VENV_PATH"
+    python3 -m venv "$VENV_PATH"
+fi
+
 source "$VENV_PATH/bin/activate"
 
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary sentence-transformers
-pip install langchain langchain-ollama pypdf pydantic
+echo "Installing core Python packages (LLM, RAG, and PostgreSQL client tools)..."
 
-# --- 4. MISTRAL MODEL PULL ---
-echo "--- 4. Downloading Mistral Model ---"
-MODEL_DIR="/workspace/mistral-7b"
-MODEL_REPO="mistralai/Mistral-7B-Instruct-v0.2"
-# Python block to handle model download...
-
-# --- 5. FINALIZATION ---
-echo "--- 5. Finalizing Setup ---"
-python3 -m ipykernel install --user --name="mistral_venv" --display-name="Python (Mistral venv)"
-deactivate
-echo "--- PROVISIONING SCRIPT COMPLETE (Full Stack Ready) ---"
-```eof
-
-***
-
-### 🔑 Critical Reminder
-
-Please ensure you replace the placeholder:
-
-`SQL_INIT_URL="[YOUR_RAW_URL_TO_INIT_DATA.SQL]"`
-
-And set the **`PG_PASSWORD`** environment variable in the Vast.ai console when launching the instance.
+pip install torch torchvision torchaudio --index-url
