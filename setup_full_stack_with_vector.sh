@@ -1,97 +1,26 @@
 #!/bin/bash
 # Exit immediately if a command exits with a non-zero status.
-# Use 'set -euxo pipefail' (uncommented) for detailed debugging output if issues persist.
 set -e
 
-# --- User-Defined Environment Variables (Set in Vast.ai Console) ---
-PG_DATA_PATH="/workspace/postgres_data"
-PG_USER="vast_user"
-PG_DB="vast_project_db"
+# --- Environment Variables ---
+VENV_PATH="/workspace/mistral_env"
+MODEL_BASE_DIR="/workspace/models"
 
-# CRITICAL: PG_PASSWORD must be set in the Vast.ai Environment Variables.
-if [ -z "$PG_PASSWORD" ]; then
-    echo "ERROR: PG_PASSWORD environment variable is not set. Exiting."
-    exit 1
-fi
+# URL for the companion onstart script (Update this with your actual public raw URL)
+ONSTART_SCRIPT_URL="[YOUR_RAW_URL_TO_ONSTART.SH]"
 
-# URL for the initial data script (Update this with your actual public raw URL)
-SQL_INIT_URL="[YOUR_RAW_URL_TO_INIT_DATA.SQL]"
-LOCAL_SQL_FILE="/tmp/init_data.sql"
-
-# --- 1. System Update and Core Dependency Installation ---
-echo "--- 1. Installing System Dependencies and Build Tools ---"
+# --- 1. System Dependency Installation ---
+echo "--- 1. Installing System Dependencies ---"
 cd /workspace
 apt-get update
-apt-get install -y --no-install-recommends python3-venv git postgresql postgresql-contrib postgresql-server-dev-all build-essential make cmake poppler-utils libpq-dev 
+# Install basic tools and necessary dependencies for Python venv and PDF processing
+apt-get install -y --no-install-recommends \
+    python3-venv git poppler-utils 
 
-# --- 2. POSTGRESQL SETUP (Initialization, Start, and pgvector install) ---
-echo "--- 2. Setting up PostgreSQL and pgvector ---"
-mkdir -p "$PG_DATA_PATH"
-
-if [ ! -f "$PG_DATA_PATH/PG_VERSION" ]; then
-    echo "Initializing new PostgreSQL cluster in $PG_DATA_PATH."
-    
-    # Get the installed PostgreSQL major version (e.g., '16')
-    PG_FULL_VERSION=$(dpkg-query -W -f='${Version}' postgresql)
-    PG_VERSION=$(echo "$PG_FULL_VERSION" | sed 's/\([0-9]*\).*/\1/')
-    PG_BIN_DIR="/usr/lib/postgresql/$PG_VERSION/bin"
-    
-    # 1. Temporarily stop the default cluster that APT might have auto-started
-    /usr/sbin/pg_dropcluster --stop "$PG_VERSION" main || true
-
-    # CRITICAL FIX: Change directory ownership to postgres user (Fixes "Operation not permitted")
-    echo "Fixing permissions on persistent data directory..."
-    chown -R postgres:postgres "$PG_DATA_PATH"
-    
-    # 2. Initialize the cluster using the persistent data path (FIXED PATH and OWNER)
-    echo "Running initdb using $PG_BIN_DIR/initdb"
-    sudo -u postgres "$PG_BIN_DIR/initdb" -D "$PG_DATA_PATH" \
-        --locale C --encoding UTF8
-
-    export PGPASSWORD="$PG_PASSWORD"
-
-    echo "Starting PostgreSQL temporarily for setup..."
-    /usr/bin/pg_ctl -D "$PG_DATA_PATH" -o "-k /tmp" -l /tmp/postgres.log start
-
-    # --- Install pgvector from source ---
-    echo "Installing and compiling pgvector extension..."
-    git clone --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector
-    cd /tmp/pgvector
-    make clean
-    make && make install
-
-    # --- Create User, Database, and Enable pgvector ---
-    echo "Creating user ($PG_USER), database ($PG_DB), and enabling extension..."
-
-    # Use version-specific binaries for precision
-    sudo -u postgres "$PG_BIN_DIR/createuser" --createdb --login --pwprompt "$PG_USER" <<EOF
-$PG_PASSWORD
-$PG_PASSWORD
-EOF
-    sudo -u postgres "$PG_BIN_DIR/createdb" -O "$PG_USER" "$PG_DB"
-    
-    # Enable the pgvector extension 
-    /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -c "CREATE EXTENSION vector;"
-
-    # --- Initialize Database Schema and Data ---
-    echo "Downloading and executing database schema and sample data from: $SQL_INIT_URL"
-    
-    wget -O "$LOCAL_SQL_FILE" "$SQL_INIT_URL"
-    
-    /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -f "$LOCAL_SQL_FILE"
-    
-    echo "Stopping PostgreSQL service. Will be restarted by /root/onstart.sh."
-    /usr/bin/pg_ctl -D "$PG_DATA_PATH" stop
-    
-    unset PGPASSWORD
-else
-    echo "PostgreSQL cluster already initialized. Skipping setup and compilation."
-fi
-
-# --- 3. PYTHON VENV AND PACKAGE INSTALLATION ---
-echo "--- 3. Setting up Python Virtual Environment and RAG Tools ---"
-VENV_PATH="/workspace/mistral_env"
+# --- 2. PYTHON VENV AND PACKAGE INSTALLATION ---
+echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
 mkdir -p "$VENV_PATH"
+mkdir -p "$MODEL_BASE_DIR"
 
 if [ ! -f "$VENV_PATH/bin/activate" ]; then
     echo "Creating Python Virtual Environment: $VENV_PATH"
@@ -100,6 +29,64 @@ fi
 
 source "$VENV_PATH/bin/activate"
 
-echo "Installing core Python packages (LLM, RAG, and PostgreSQL client tools)..."
+echo "Installing core Python packages (LLM, RAG, and database client tools)..."
 
-pip install torch torchvision torchaudio --index-url
+# Install PyTorch and related CUDA dependencies
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# Install LLM, RAG, and necessary utility libraries
+pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary sentence-transformers
+pip install langchain langchain-ollama pypdf pydantic huggingface-hub
+
+# --- 3. MODEL PULLS (Download to persistent storage) ---
+echo "--- 3. Downloading LLM and Embedding Models ---"
+
+# --- A. Large Language Model (Mistral) ---
+LLM_DIR="$MODEL_BASE_DIR/Mistral-7B-Instruct-v0.2"
+LLM_REPO="mistralai/Mistral-7B-Instruct-v0.2"
+
+# --- B. Embedding Model (BGE Small) ---
+EMB_DIR="$MODEL_BASE_DIR/bge-small-en-v1.5"
+EMB_REPO="BAAI/bge-small-en-v1.5"
+
+python3 -c "
+from huggingface_hub import snapshot_download
+import os
+
+def download_model(repo_id, local_dir):
+    if not os.path.exists(local_dir) or not os.listdir(local_dir):
+        print(f'Downloading model {repo_id} to {local_dir}...')
+        snapshot_download(repo_id=repo_id, local_dir=local_dir, local_dir_use_symlinks=False)
+    else:
+        print(f'Model {repo_id} already found. Skipping download.')
+
+download_model('$LLM_REPO', '$LLM_DIR')
+download_model('$EMB_REPO', '$EMB_DIR')
+"
+
+# --- 4. FINALIZATION AND ONSTART SETUP ---
+echo "--- 4. Finalizing Setup and Installing Onstart Script ---"
+echo "Registering venv kernel for Jupyter/Spyder."
+python3 -m ipykernel install --user --name="mistral_venv" --display-name="Python (Mistral venv)"
+
+deactivate
+
+# CRITICAL: Download and install the companion startup script
+echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
+wget -O /root/onstart.sh "$ONSTART_SCRIPT_URL"
+chmod +x /root/onstart.sh
+echo "Onstart script installed and made executable."
+
+echo "--- PROVISIONING SCRIPT COMPLETE (ML Stack Ready) ---"
+```eof
+
+### 💾 Companion `onstart_ml.sh` (Must Be Hosted Separately)
+
+You need to host a file named `onstart_ml.sh` with the following simple content and use its RAW URL as the placeholder above.
+
+```bash:On Start Script (Simple):onstart_ml.sh
+#!/bin/bash
+# This script runs every time the instance starts (or restarts).
+
+echo "Machine ready. LLM models and Python environment are available in /workspace/models."
+# Add any post-provisioning tasks here if needed
+```eof
