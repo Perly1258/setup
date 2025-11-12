@@ -28,6 +28,8 @@ apt-get install -y \
 # --- 2. POSTGRESQL SETUP (Initialization, Start, and pgvector install) ---
 
 mkdir -p "$PG_DATA_PATH"
+# Determine the PostgreSQL binary directory for the current system
+PG_VERSION_DIR=$(/usr/lib/postgresql/$(dpkg-query -W -f='${Version}' postgresql | cut -d. -f1)/bin)
 
 if [ ! -f "$PG_DATA_PATH/PG_VERSION" ]; then
     echo "Initializing new PostgreSQL cluster."
