@@ -13,7 +13,7 @@ SQL_INIT_URL="https://raw.githubusercontent.com/Perly1258/setup/refs/heads/main/
 LOCAL_SQL_FILE="/tmp/init_data.sql"
 
 # Determine the PostgreSQL binary directory for the current system
-PG_VERSION_DIR=$(/usr/lib/postgresql/$(dpkg-query -W -f='${Version}' postgresql | cut -d. -f1)/bin)
+#PG_VERSION_DIR=$(/usr/lib/postgresql/$(dpkg-query -W -f='${Version}' postgresql | cut -d. -f1)/bin)
 
 echo "--- 1. System Update and Core Dependency Installation ---"
 cd /workspace
