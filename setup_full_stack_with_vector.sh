@@ -9,7 +9,7 @@ PG_DB="vast_project_db"
 PG_PASSWORD="vast_user" # <<< CRITICAL: CHANGE THIS PASSWORD
 
 # URL for the initial data script (assuming you host init_data.sql next to this script)
-SQL_INIT_URL="https://github.com/Perly1258/setup/blob/main/init_data.sql"
+SQL_INIT_URL="https://raw.githubusercontent.com/Perly1258/setup/refs/heads/main/init_data.sql"
 LOCAL_SQL_FILE="/tmp/init_data.sql"
 
 # Determine the PostgreSQL binary directory for the current system
