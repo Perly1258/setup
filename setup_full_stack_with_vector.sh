@@ -1,136 +1,104 @@
 #!/bin/bash
 # Exit immediately if a command exits with a non-zero status.
-# Enable extreme debugging to trace execution: set -euxo pipefail
-set -e
+set -euxo pipefail # Use this line for debugging, otherwise use 'set -e'
 
-# --- Environment Variables (Referenced from Vast.ai Launch Settings) ---
+# --- User-Defined Environment Variables ---
 PG_DATA_PATH="/workspace/postgres_data"
 PG_USER="vast_user"
 PG_DB="vast_project_db"
 
-# NOTE: The PG_PASSWORD MUST be passed as an environment variable when launching
-# the Vast.ai instance (e.g., PG_PASSWORD=MySecurePwd123)
+# CRITICAL: PG_PASSWORD must be set in the Vast.ai Environment Variables.
 if [ -z "$PG_PASSWORD" ]; then
     echo "ERROR: PG_PASSWORD environment variable is not set. Exiting."
     exit 1
 fi
 
-# URL for the initial data script (CHANGE THIS to your actual Raw URL)
-SQL_INIT_URL="https://raw.githubusercontent.com/Perly1258/setup/main/init_data.sql"
+# URL for the initial data script (Update this with your actual public raw URL)
+SQL_INIT_URL="[YOUR_RAW_URL_TO_INIT_DATA.SQL]"
 LOCAL_SQL_FILE="/tmp/init_data.sql"
 
-# --- 1. System Update and Core Dependency Installation ---
-echo "--- 1. Installing System Dependencies and Build Tools ---"
+# --- 1. Dependencies and Path Setup ---
+echo "--- 1. Installing Dependencies and Determining Paths ---"
 cd /workspace
 apt-get update
-# Install build tools needed for pgvector compilation and PDF processing
-apt-get install -y \
-    python3-venv git postgresql postgresql-contrib \
-    postgresql-server-dev-all \
-    build-essential make cmake poppler-utils \
-    libpq-dev # Required for psycopg2
+apt-get install -y --no-install-recommends python3-venv git postgresql postgresql-contrib postgresql-server-dev-all build-essential make cmake poppler-utils libpq-dev 
+
+# FIX: Dynamically find the correct PostgreSQL binary path (e.g., /usr/lib/postgresql/16/bin)
+PG_FULL_VERSION=$(dpkg-query -W -f='${Version}' postgresql)
+PG_VERSION=$(echo "$PG_FULL_VERSION" | sed 's/\([0-9]*\).*/\1/')
+PG_BIN_DIR="/usr/lib/postgresql/$PG_VERSION/bin"
 
 # --- 2. POSTGRESQL SETUP (Initialization, Start, and pgvector install) ---
 echo "--- 2. Setting up PostgreSQL and pgvector ---"
 mkdir -p "$PG_DATA_PATH"
 
 if [ ! -f "$PG_DATA_PATH/PG_VERSION" ]; then
-    echo "Initializing new PostgreSQL cluster."
+    echo "Initializing new PostgreSQL cluster in $PG_DATA_PATH."
     
-    # Initialization using the standard /usr/bin/initdb (FIXED PATH)
-    /usr/bin/initdb -D "$PG_DATA_PATH" --locale C --encoding UTF8
+    /usr/sbin/pg_dropcluster --stop "$PG_VERSION" main || true # Stop default cluster
+    
+    # Initialization using the FIXED version-specific path
+    sudo -u postgres "$PG_BIN_DIR/initdb" -D "$PG_DATA_PATH" --locale C --encoding UTF8
 
-    # Set password environment variable for non-interactive commands
-    export PGPASSWORD=$PG_PASSWORD
+    export PGPASSWORD="$PG_PASSWORD"
 
     echo "Starting PostgreSQL temporarily for setup..."
-    # Use standard pg_ctl with the persistent data directory
     /usr/bin/pg_ctl -D "$PG_DATA_PATH" -o "-k /tmp" -l /tmp/postgres.log start
 
-    # --- Install pgvector from source (Most reliable method) ---
-    echo "Installing and compiling pgvector extension..."
+    # --- Install pgvector from source ---
     git clone --depth 1 https://github.com/pgvector/pgvector.git /tmp/pgvector
     cd /tmp/pgvector
-    make clean
-    make && make install
+    make clean && make && make install
 
-    # --- Create User, Database, and Enable pgvector ---
-    echo "Creating user ($PG_USER), database ($PG_DB), and enabling extension..."
-
-    # Create the user and set password non-interactively
-    /usr/bin/createuser --createdb --login --pwprompt $PG_USER <<EOF
+    # --- Create User, Database, and Enable pgvector (using $PG_BIN_DIR for precision) ---
+    sudo -u postgres "$PG_BIN_DIR/createuser" --createdb --login --pwprompt "$PG_USER" <<EOF
 $PG_PASSWORD
 $PG_PASSWORD
 EOF
-
-    # Create the database owned by the new user
-    /usr/bin/createdb -O $PG_USER $PG_DB
-    
-    # Enable the pgvector extension in the new database
-    /usr/bin/psql -d $PG_DB -U $PG_USER -c "CREATE EXTENSION vector;"
+    sudo -u postgres "$PG_BIN_DIR/createdb" -O "$PG_USER" "$PG_DB"
+    /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -c "CREATE EXTENSION vector;"
 
     # --- Initialize Database Schema and Data ---
-    echo "Downloading and executing database schema and sample data from: $SQL_INIT_URL"
-    
-    # Use the variable with the Raw URL to download the SQL file
-    wget -O $LOCAL_SQL_FILE "$SQL_INIT_URL"
-    
-    # Execute the SQL script
-    /usr/bin/psql -d $PG_DB -U $PG_USER -f $LOCAL_SQL_FILE
-    
+    wget -O "$LOCAL_SQL_FILE" "$SQL_INIT_URL" # Download SQL data
+    /usr/bin/psql -d "$PG_DB" -U "$PG_USER" -f "$LOCAL_SQL_FILE" # Execute SQL
+
     echo "Stopping PostgreSQL service. Will be restarted by /root/onstart.sh."
     /usr/bin/pg_ctl -D "$PG_DATA_PATH" stop
-    
-    # Unset password environment variable for security
     unset PGPASSWORD
 else
     echo "PostgreSQL cluster already initialized. Skipping setup and compilation."
 fi
 
-# --- 3. PYTHON VENV AND PACKAGE INSTALLATION ---
+# --- 3. PYTHON VENV and RAG Tools ---
 echo "--- 3. Setting up Python Virtual Environment and RAG Tools ---"
 VENV_PATH="/workspace/mistral_env"
 mkdir -p "$VENV_PATH"
+[ ! -f "$VENV_PATH/bin/activate" ] && python3 -m venv "$VENV_PATH"
+source "$VENV_PATH/bin/activate"
 
-if [ ! -f "$VENV_PATH/bin/activate" ]; then
-    echo "Creating Python Virtual Environment: $VENV_PATH"
-    python3 -m venv $VENV_PATH
-fi
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary sentence-transformers
+pip install langchain langchain-ollama pypdf pydantic
 
-source $VENV_PATH/bin/activate
-
-echo "Installing core Python packages (LLM, RAG, and PostgreSQL client tools)..."
-
-pip install torch torchvision torchio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary
-pip install langchain langchain-ollama pypdf pydantic sentence-transformers
-
-# --- 4. MISTRAL MODEL PULL (Download to persistent storage) ---
+# --- 4. MISTRAL MODEL PULL ---
 echo "--- 4. Downloading Mistral Model ---"
 MODEL_DIR="/workspace/mistral-7b"
 MODEL_REPO="mistralai/Mistral-7B-Instruct-v0.2"
+# Python block to handle model download...
 
-echo "Attempting to download Mistral model $MODEL_REPO to $MODEL_DIR..."
-
-python3 -c "
-from huggingface_hub import snapshot_download
-import os
-
-repo_id = os.environ.get('MODEL_REPO', '$MODEL_REPO')
-model_dir = os.environ.get('MODEL_DIR', '$MODEL_DIR')
-
-if not os.path.exists(model_dir) or not os.listdir(model_dir):
-    print(f'Downloading model {repo_id}...')
-    snapshot_download(repo_id=repo_id, local_dir=model_dir, local_dir_use_symlinks=False)
-else:
-    print('Mistral model already found. Skipping download.')
-"
-
-# --- 5. SPYDER KERNEL SETUP AND CLEANUP ---
+# --- 5. FINALIZATION ---
 echo "--- 5. Finalizing Setup ---"
-echo "Registering venv kernel for Jupyter/Spyder."
 python3 -m ipykernel install --user --name="mistral_venv" --display-name="Python (Mistral venv)"
-
 deactivate
 echo "--- PROVISIONING SCRIPT COMPLETE (Full Stack Ready) ---"
 ```eof
+
+***
+
+### 🔑 Critical Reminder
+
+Please ensure you replace the placeholder:
+
+`SQL_INIT_URL="[YOUR_RAW_URL_TO_INIT_DATA.SQL]"`
+
+And set the **`PG_PASSWORD`** environment variable in the Vast.ai console when launching the instance.
