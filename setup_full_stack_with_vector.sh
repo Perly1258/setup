@@ -67,4 +67,70 @@ EOF
     /usr/bin/createdb -O $PG_USER $PG_DB
     
     # Enable the pgvector extension in the new database
-    /usr/bin/psql -d $PG_DB -
+    /usr/bin/psql -d $PG_DB -U $PG_USER -c "CREATE EXTENSION vector;"
+
+    # --- Initialize Database Schema and Data ---
+    echo "Downloading and executing database schema and sample data from: $SQL_INIT_URL"
+    
+    # Use the variable with the Raw URL to download the SQL file
+    wget -O $LOCAL_SQL_FILE "$SQL_INIT_URL"
+    
+    # Execute the SQL script
+    /usr/bin/psql -d $PG_DB -U $PG_USER -f $LOCAL_SQL_FILE
+    
+    echo "Stopping PostgreSQL service. Will be restarted by /root/onstart.sh."
+    /usr/bin/pg_ctl -D "$PG_DATA_PATH" stop
+    
+    # Unset password environment variable for security
+    unset PGPASSWORD
+else
+    echo "PostgreSQL cluster already initialized. Skipping setup and compilation."
+fi
+
+# --- 3. PYTHON VENV AND PACKAGE INSTALLATION ---
+echo "--- 3. Setting up Python Virtual Environment and RAG Tools ---"
+VENV_PATH="/workspace/mistral_env"
+mkdir -p "$VENV_PATH"
+
+if [ ! -f "$VENV_PATH/bin/activate" ]; then
+    echo "Creating Python Virtual Environment: $VENV_PATH"
+    python3 -m venv $VENV_PATH
+fi
+
+source $VENV_PATH/bin/activate
+
+echo "Installing core Python packages (LLM, RAG, and PostgreSQL client tools)..."
+
+pip install torch torchvision torchio --index-url https://download.pytorch.org/whl/cu121
+pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary
+pip install langchain langchain-ollama pypdf pydantic sentence-transformers
+
+# --- 4. MISTRAL MODEL PULL (Download to persistent storage) ---
+echo "--- 4. Downloading Mistral Model ---"
+MODEL_DIR="/workspace/mistral-7b"
+MODEL_REPO="mistralai/Mistral-7B-Instruct-v0.2"
+
+echo "Attempting to download Mistral model $MODEL_REPO to $MODEL_DIR..."
+
+python3 -c "
+from huggingface_hub import snapshot_download
+import os
+
+repo_id = os.environ.get('MODEL_REPO', '$MODEL_REPO')
+model_dir = os.environ.get('MODEL_DIR', '$MODEL_DIR')
+
+if not os.path.exists(model_dir) or not os.listdir(model_dir):
+    print(f'Downloading model {repo_id}...')
+    snapshot_download(repo_id=repo_id, local_dir=model_dir, local_dir_use_symlinks=False)
+else:
+    print('Mistral model already found. Skipping download.')
+"
+
+# --- 5. SPYDER KERNEL SETUP AND CLEANUP ---
+echo "--- 5. Finalizing Setup ---"
+echo "Registering venv kernel for Jupyter/Spyder."
+python3 -m ipykernel install --user --name="mistral_venv" --display-name="Python (Mistral venv)"
+
+deactivate
+echo "--- PROVISIONING SCRIPT COMPLETE (Full Stack Ready) ---"
+```eof
