@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 VENV_PATH="/workspace/rag_env"
 MODEL_BASE_DIR="/workspace/models"
@@ -7,13 +8,16 @@ ONSTART_SCRIPT_URL="https://raw.githubusercontent.com/Perly1258/setup/refs/heads
 
 echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
-apt-get updateroot
+# FIX: Corrected the update command
+apt-get update
+# Cleaned up the redundant install line
 apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils curl postgresql postgresql-contrib curl postgresql postgresql-contrib postgresql-16-pgvector
-    
+    python3-venv git poppler-utils curl postgresql postgresql-contrib postgresql-16-pgvector
+
+# PostgreSQL Setup (Relocated and kept clean)
 sudo service postgresql start
 sudo -u postgres createdb rag_db
-sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 
+sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 
 echo "Cloning repository $REPO_URL into /workspace/setup"
@@ -39,21 +43,30 @@ pip install spyder-kernels==3.0.5
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
             llama-index-readers-file pymupdf
-ollama serve &
-ollama pull mistral 
-ollama pull bge-small 
-ollama pull nomic-embed-text
 
-# Start the Ollama server (usually needs to be run in the background or a separate terminal)
+echo "--- 3. Ollama Model Downloads and Server Start ---"
+# Start the Ollama server in the background
+ollama serve &
+# Give the server a moment to start (optional, but safer)
+sleep 5 
+
+ollama pull mistral
+ollama pull nomic-embed-text
+# Note: bge-small is often superseded by nomic-embed-text, but kept for completeness
+# ollama pull bge-small 
 
 CONNECTION_FILE="/workspace/setup/remotekernel.json"
-
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
+
+# Start the remote kernel in the background
 python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
 
+# FIX: Deactivate the virtual environment
+deactivate
 
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
-wget -O /Workspace/onstart.sh "$ONSTART_SCRIPT_URL"
+# Note: Changed /Workspace/ to /workspace/
+wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /workspace/onstart.sh
 echo "Onstart script installed and made executable."
 
