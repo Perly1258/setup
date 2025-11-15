@@ -35,32 +35,12 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 
-echo "--- 3. Downloading LLM and Embedding Models ---"
-LLM_DIR="$MODEL_BASE_DIR/Mistral-7B-Instruct-v0.2"
-LLM_REPO="mistralai/Mistral-7B-Instruct-v0.2"
-EMB_DIR="$MODEL_BASE_DIR/bge-small-en-v1.5"
-EMB_REPO="BAAI/c-v1.5"
-
-python3 -c "
-from huggingface_hub import snapshot_download
-import os
-
-def download_model(repo_id, local_dir):
-    if not os.path.exists(local_dir) or not os.listdir(local_dir):
-        print(f'Downloading model {repo_id} to {local_dir}...')
-        snapshot_download(repo_id=repo_id, local_dir=local_dir)
-    else:
-        print(f'Model {repo_id} already found. Skipping download.')
-
-download_model('$LLM_REPO', '$LLM_DIR')
-download_model('$EMB_REPO', '$EMB_DIR')
-"
 ollama pull mistral 
 ollama pull bge-small 
-
+# Start the Ollama server (usually needs to be run in the background or a separate terminal)
+ollama serve &
 CONNECTION_FILE="/workspace/setup/remotekernel.json"
 
-"
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
 python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" 
 
