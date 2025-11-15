@@ -3,10 +3,10 @@ po#!/bin/bash
 set -e
 
 # --- Environment Variables ---
-VENV_PATH="/workspace/mistral_env"
+VENV_PATH="/workspace/rag_env"
 MODEL_BASE_DIR="/workspace/models"
 REPO_URL="https://github.com/Perly1258/setup.git" # Repository to clone
-ONSTART_SCRIPT_URL="[YOUR_RAW_URL_TO_ONSTART.SH]" # URL for the companion startup script
+ONSTART_SCRIPT_URL="https://raw.githubusercontent.com/Perly1258/setup/refs/heads/main/onstart.sh" # URL for the companion startup script
 
 # --- 1. System Dependency Installation ---
 echo "--- 1. Installing System Dependencies & Cloning Repository ---"
@@ -43,13 +43,14 @@ pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 # --- 3. MODEL PULLS (Download to persistent storage) ---
 echo "--- 3. Downloading LLM and Embedding Models ---"
 
+
 # --- A. Large Language Model (Mistral) ---
 LLM_DIR="$MODEL_BASE_DIR/Mistral-7B-Instruct-v0.2"
 LLM_REPO="mistralai/Mistral-7B-Instruct-v0.2"
 
 # --- B. Embedding Model (BGE Small) ---
 EMB_DIR="$MODEL_BASE_DIR/bge-small-en-v1.5"
-EMB_REPO="BAAI/bge-small-en-v1.5"
+EMB_REPO="BAAI/c-v1.5"
 
 python3 -c "
 from huggingface_hub import snapshot_download
@@ -65,12 +66,20 @@ def download_model(repo_id, local_dir):
 download_model('$LLM_REPO', '$LLM_DIR')
 download_model('$EMB_REPO', '$EMB_DIR')
 "
+ollama pull mistral
+ollama pull bge-small
+apt-get install -y --no-install-recommends \
+    python3-venv git poppler-utils curl postgresql postgresql-contrib
+sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+ONNECTION_FILE="/workspace/setup/connection_file.json"
 
-# --- 4. FINALIZATION AND ONSTART SETUP ---
-echo "--- 4. Finalizing Setup and Installing Onstart Script ---"
-echo "Registering venv kernel for Jupyter/Spyder."
-python3 -m ipykernel install --user --name="mistral_venv" --display-name="Python (Mistral venv)"
+echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
 
+# Start the kernel, listening on ALL IPs (0.0.0.0) so your local machine can connect
+# The -f flag specifies the path for the JSON connection file.
+python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE"
+CONNECTION_FILE="/workspace/setup/remotekernel.json"
+python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE"
 deactivate
 
 # CRITICAL: Download and install the companion startup script to /root/
