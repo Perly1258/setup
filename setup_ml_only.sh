@@ -10,8 +10,7 @@ echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
 apt-get updateroot
 apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils 
-apt-get install -y --no-install-recommends \
+    python3-venv git poppler-utils curl postgresql postgresql-contrib
       curl postgresql postgresql-contrib
 #sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 
 echo "Cloning repository $REPO_URL into /workspace/setup"
