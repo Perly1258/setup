@@ -9,8 +9,12 @@ echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
 apt-get updateroot
 apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils curl postgresql postgresql-contrib curl postgresql postgresql-contrib
-#sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 
+    python3-venv git poppler-utils curl postgresql postgresql-contrib curl postgresql postgresql-contrib postgresql-16-pgvector
+    
+sudo service postgresql start
+sudo -u postgres createdb rag_db
+sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 
+
 echo "Cloning repository $REPO_URL into /workspace/setup"
 git clone "$REPO_URL"
 
@@ -51,8 +55,8 @@ def download_model(repo_id, local_dir):
 download_model('$LLM_REPO', '$LLM_DIR')
 download_model('$EMB_REPO', '$EMB_DIR')
 "
-ollama pull mistral &
-ollama pull bge-small &
+ollama pull mistral 
+ollama pull bge-small 
 
 CONNECTION_FILE="/workspace/setup/remotekernel.json"
 
