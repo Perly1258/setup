@@ -14,6 +14,7 @@ apt-get install -y --no-install-recommends \
 sudo service postgresql start
 sudo -u postgres createdb rag_db
 sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 
+sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 
 echo "Cloning repository $REPO_URL into /workspace/setup"
 git clone "$REPO_URL"
@@ -35,10 +36,14 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 pip install spyder-kernels==3.0.5
-
+pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
+            llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
+            llama-index-readers-file pymupdf
 ollama serve &
 ollama pull mistral 
 ollama pull bge-small 
+ollama pull nomic-embed-text
+
 # Start the Ollama server (usually needs to be run in the background or a separate terminal)
 
 CONNECTION_FILE="/workspace/setup/remotekernel.json"
