@@ -34,7 +34,7 @@ echo "Installing core Python packages..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
-pip install spyder-kernels==3.0.7
+pip install spyder-kernels==3.0.5
 
 ollama serve &
 ollama pull mistral 
