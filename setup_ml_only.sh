@@ -5,17 +5,20 @@ set -e
 # --- Environment Variables ---
 VENV_PATH="/workspace/mistral_env"
 MODEL_BASE_DIR="/workspace/models"
-
-# URL for the companion onstart script (Update this with your actual public raw URL)
-ONSTART_SCRIPT_URL="[YOUR_RAW_URL_TO_ONSTART.SH]"
+REPO_URL="https://github.com/Perly1258/setup.git" # Repository to clone
+ONSTART_SCRIPT_URL="[YOUR_RAW_URL_TO_ONSTART.SH]" # URL for the companion startup script
 
 # --- 1. System Dependency Installation ---
-echo "--- 1. Installing System Dependencies ---"
+echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
 apt-get update
-# Install basic tools and necessary dependencies for Python venv and PDF processing
+# Install basic tools and necessary dependencies
 apt-get install -y --no-install-recommends \
     python3-venv git poppler-utils 
+
+# --- CRITICAL ADDITION: Clone the GitHub repository into /workspace ---
+echo "Cloning repository $REPO_URL into /workspace/setup"
+git clone "$REPO_URL"
 
 # --- 2. PYTHON VENV AND PACKAGE INSTALLATION ---
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
@@ -29,7 +32,7 @@ fi
 
 source "$VENV_PATH/bin/activate"
 
-echo "Installing core Python packages (LLM, RAG, and database client tools)..."
+echo "Installing core Python packages..."
 
 # Install PyTorch and related CUDA dependencies
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
@@ -70,23 +73,10 @@ python3 -m ipykernel install --user --name="mistral_venv" --display-name="Python
 
 deactivate
 
-# CRITICAL: Download and install the companion startup script
+# CRITICAL: Download and install the companion startup script to /root/
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 wget -O /root/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /root/onstart.sh
 echo "Onstart script installed and made executable."
 
 echo "--- PROVISIONING SCRIPT COMPLETE (ML Stack Ready) ---"
-```eof
-
-### 💾 Companion `onstart_ml.sh` (Must Be Hosted Separately)
-
-You need to host a file named `onstart_ml.sh` with the following simple content and use its RAW URL as the placeholder above.
-
-```bash:On Start Script (Simple):onstart_ml.sh
-#!/bin/bash
-# This script runs every time the instance starts (or restarts).
-
-echo "Machine ready. LLM models and Python environment are available in /workspace/models."
-# Add any post-provisioning tasks here if needed
-```eof
