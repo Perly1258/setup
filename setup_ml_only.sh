@@ -8,12 +8,12 @@ ONSTART_SCRIPT_URL="https://raw.githubusercontent.com/Perly1258/setup/refs/heads
 
 echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
-apt-get update
+apt-get updateroot
 apt-get install -y --no-install-recommends \
     python3-venv git poppler-utils 
 apt-get install -y --no-install-recommends \
       curl postgresql postgresql-contrib
-sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
+#sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;" 
 echo "Cloning repository $REPO_URL into /workspace/setup"
 git clone "$REPO_URL"
 
@@ -35,11 +35,8 @@ pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary sen
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 
 echo "--- 3. Downloading LLM and Embedding Models ---"
-
-
 LLM_DIR="$MODEL_BASE_DIR/Mistral-7B-Instruct-v0.2"
 LLM_REPO="mistralai/Mistral-7B-Instruct-v0.2"
-
 EMB_DIR="$MODEL_BASE_DIR/bge-small-en-v1.5"
 EMB_REPO="BAAI/c-v1.5"
 
@@ -57,8 +54,8 @@ def download_model(repo_id, local_dir):
 download_model('$LLM_REPO', '$LLM_DIR')
 download_model('$EMB_REPO', '$EMB_DIR')
 "
-ollama pull mistral
-ollama pull bge-small
+ollama pull mistral &
+ollama pull bge-small &
 
 CONNECTION_FILE="/workspace/setup/connection_file.json"
 
