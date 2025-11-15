@@ -32,13 +32,15 @@ source "$VENV_PATH/bin/activate"
 echo "Installing core Python packages..."
 
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers accelerate ipykernel spyder-kernels psycopg2-binary sentence-transformers
+pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
+pip install spyder-kernels==3.0.7
 
+ollama serve &
 ollama pull mistral 
 ollama pull bge-small 
 # Start the Ollama server (usually needs to be run in the background or a separate terminal)
-ollama serve &
+
 CONNECTION_FILE="/workspace/setup/remotekernel.json"
 
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
