@@ -48,7 +48,7 @@ import os
 def download_model(repo_id, local_dir):
     if not os.path.exists(local_dir) or not os.listdir(local_dir):
         print(f'Downloading model {repo_id} to {local_dir}...')
-        snapshot_download(repo_id=repo_id, local_dir=local_dir, local_dir_use_symlinks=False)
+        snapshot_download(repo_id=repo_id, local_dir=local_dir)
     else:
         print(f'Model {repo_id} already found. Skipping download.')
 
