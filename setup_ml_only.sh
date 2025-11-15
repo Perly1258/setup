@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 VENV_PATH="/workspace/rag_env"
 MODEL_BASE_DIR="/workspace/models"
@@ -55,11 +54,11 @@ download_model('$EMB_REPO', '$EMB_DIR')
 ollama pull mistral &
 ollama pull bge-small &
 
-CONNECTION_FILE="/workspace/setup/connection_file.json"
+CONNECTION_FILE="/workspace/setup/remotekernel.json"
 
 "
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
-python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
+python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" 
 
 
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
