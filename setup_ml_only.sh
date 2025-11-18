@@ -13,15 +13,17 @@ apt-get update
 # Cleaned up the redundant install line
 apt-get install -y --no-install-recommends \
     python3-venv git poppler-utils curl postgresql postgresql-contrib postgresql-16-pgvector
-
+    
+echo "Cloning repository $REPO_URL into /workspace/setup"
+git clone "$REPO_URL"
+cd /workspace/setup/db
 # PostgreSQL Setup (Relocated and kept clean)
 sudo service postgresql start
 sudo -u postgres createdb rag_db
 sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d postgres -f private_market_setup.sql
 
-echo "Cloning repository $REPO_URL into /workspace/setup"
-git clone "$REPO_URL"
 
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
 mkdir -p "$VENV_PATH"
