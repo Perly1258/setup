@@ -22,7 +22,7 @@ sudo service postgresql start
 sudo -u postgres createdb rag_db
 sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
-sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d postgres -f db/setup/private_market_setup.sql
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d postgres -f /workspace/setup/db/setup/private_market_setup.sql
 
 
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"

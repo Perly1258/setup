@@ -55,14 +55,14 @@ CREATE TABLE Fund_Cash_Flows (
 
 -- Load Portfolio Data
 COPY PE_Portfolio (Fund_ID, Fund_Name, Vintage_Year, Primary_Strategy, Sub_Strategy, Total_Commitment_MM_USD, Comment)
-FROM './data/PE_Portfolio.csv'
+FROM '/workspace/setup/data/PE_Portfolio.csv'
 DELIMITER ','
 CSV HEADER;
 
 
 -- Load Cash Flow Data
 COPY Fund_Cash_Flows (Fund_ID, Transaction_Date, Reporting_Quarter, Transaction_Type, Investment_MM_USD, Fees_MM_USD, Return_of_Cost_MM_USD, Profit_MM_USD, Quarterly_NAV_USD, MOIC)
-FROM './data/Fund_Cash_Flows.csv'
+FROM '/workspace/setup/data/Fund_Cash_Flows.csv'
 DELIMITER ','
 CSV HEADER;
 
