@@ -16,7 +16,7 @@ from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.vector_stores.postgres import PGVectorStore 
 
 # --- Configuration ---
-PDF_DIR = "/workspace/setup/pdf"             
+PDF_DIR = "/workspace/setup/documents"             
 OLLAMA_MODEL = "mistral"     
 EMBEDDING_MODEL = "nomic-embed-text" 
 DB_TABLE_NAME = "rag_documents" 

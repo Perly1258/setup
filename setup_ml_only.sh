@@ -44,7 +44,7 @@ pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 pip install spyder-kernels==3.0.5
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf
+            llama-index-readers-file pymupdf tabulate
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 # Start the Ollama server in the background
@@ -69,7 +69,8 @@ deactivate
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 # Note: Changed /Workspace/ to /workspace/
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
-chmod +x /workspace/onstart.sh
+chmod +x /workspace/*.sh
+
 echo "Onstart script installed and made executable."
 
 echo "--- PROVISIONING SCRIPT COMPLETE (ML Stack Ready) ---"
