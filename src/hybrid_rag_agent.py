@@ -21,23 +21,24 @@ from llama_index.vector_stores.postgres import PGVectorStore
 from llama_index.core.query_engine import RouterQueryEngine
 from llama_index.core.tools import QueryEngineTool
 from llama_index.core.selectors import LLMSingleSelector 
-from llama_index.core.utilities.sql_wrapper import SQLTableRetriever
 
 # Configure logging
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
 # --- Configuration (Match your local environment and service names) ---
-PDF_DIR = "documents" 
+# FIX: Use absolute path construction for the PDF directory
+BASE_DIR = Path(__file__).resolve().parent.parent
+PDF_DIR = str(BASE_DIR / "documents") # /home/alexander/Projects/financial-rag-model/documents
+
 OLLAMA_MODEL = "mistral"     
 EMBEDDING_MODEL = "nomic-embed-text" 
 DB_VECTOR_TABLE = "rag_documents" 
-# CRITICAL: Table list for SQL RAG (Must match your setup)
+# CRITICAL: Table list for SQL RAG 
 DB_TABLE_NAMES = ["pe_portfolio", "fund_cash_flows", "projected_cash_flows", "fund_model_assumptions"] 
 PERSIST_DIR = "./storage" 
 
 # --- PostgreSQL Configuration (Using hardcoded defaults for seamless initial setup) ---
-# NOTE: Replace with os.environ.get if moving to production service deployment
 DB_USER = "postgres"
 DB_PASS = "postgres" 
 DB_HOST = "localhost"
@@ -69,7 +70,10 @@ def setup_llm_and_tools():
     
     # 2. Setup PostgreSQL Engine for Structured Data (SQL RAG)
     try:
+        # Create SQLAlchemy engine for all SQL interactions
         sql_engine = create_engine(CONNECTION_STRING)
+        
+        # SQLDatabase exposes the schemas for the LLM to write SQL queries
         sql_database = SQLDatabase(sql_engine, include_tables=DB_TABLE_NAMES)
         logging.info("Successfully connected to PostgreSQL for Structured Data RAG.")
     except Exception as e:
@@ -85,33 +89,42 @@ def setup_llm_and_tools():
 def get_vector_query_engine(sql_engine, sql_database):
     """Loads/creates the Vector Index from PDF documents."""
     
-    # Use the SQL engine for storing vectors (PGVectorStore)
+    # PGVectorStore connects to PostgreSQL to store the vector embeddings
+    # FIX: Using connection_string eliminates the "engine and async_engine must be provided" ValueError
     vector_store = PGVectorStore(
-        service_context=None,
-        engine=sql_engine,
-        embed_dim=Settings.embed_model.get_query_embedding("test").shape[0],
+        connection_string=CONNECTION_STRING, 
+        embed_dim=len(Settings.embed_model.get_query_embedding("test")), 
         table_name=DB_VECTOR_TABLE,
         schema_name="public",
     )
     
     try:
-        # Attempt to load existing index from local storage cache
-        storage_context = StorageContext.from_defaults(vector_store=vector_store, persist_dir=PERSIST_DIR)
-        index = load_index_from_storage(storage_context)
-        logging.info("Loaded existing Vector Index from disk.")
+        # Check if the persist directory exists (for LlamaIndex internal cache)
+        if Path(PERSIST_DIR).exists():
+             # Attempt to load existing index from local storage cache
+            storage_context = StorageContext.from_defaults(vector_store=vector_store, persist_dir=PERSIST_DIR)
+            index = load_index_from_storage(storage_context)
+            logging.info("Loaded existing Vector Index from disk.")
+            
+        else:
+            raise FileNotFoundError # Trigger creation logic if no local cache exists
     
-    except Exception:
-        logging.info("Creating new Vector Index from documents...")
+    except Exception as e:
+        logging.info(f"Indexing required or error loading index: {e}")
         
-        # Load PDF documents
+        # Load PDF documents from the documents folder (using absolute path)
         documents = SimpleDirectoryReader(PDF_DIR).load_data()
         
         # Parse nodes and create index
         parser = SentenceSplitter(chunk_size=1024, chunk_overlap=20)
         nodes = parser.get_nodes_from_documents(documents)
+        
+        # Create StorageContext using the vector_store instance
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+        
         index = VectorStoreIndex(
             nodes,
-            storage_context=StorageContext.from_defaults(vector_store=vector_store, persist_dir=PERSIST_DIR)
+            storage_context=storage_context
         )
         # Save the index metadata locally (for faster startup next time)
         index.storage_context.persist(persist_dir=PERSIST_DIR)
@@ -132,13 +145,9 @@ def create_hybrid_router(sql_database, vector_query_engine):
     """Creates the router to choose between the SQL (structured) and Vector (unstructured) engines."""
     
     # 1. Define the Structured Data Tool (SQL RAG)
-    # Using SQLTableRetriever to make sure the LLM only uses relevant table schemas
-    sql_retriever = SQLTableRetriever(sql_database)
-    
     sql_tool = QueryEngineTool.from_defaults(
         query_engine=sql_database.as_query_engine(
-            synthesize_response=True,
-            service_context=None
+            synthesize_response=True
         ),
         name="sql_table_tool",
         description=(
@@ -177,7 +186,6 @@ if __name__ == "__main__":
     sql_engine, sql_database = setup_llm_and_tools()
     
     # 2. Build the Vector Index
-    # NOTE: This step only runs fully the first time to index documents
     vector_query_engine = get_vector_query_engine(sql_engine, sql_database)
     
     # 3. Create the Hybrid Router
@@ -206,14 +214,15 @@ if __name__ == "__main__":
             
             # Show retrieved context (either from SQL execution or VDB text chunks)
             if response.source_nodes:
+                print("RETRIEVED CONTEXT (VERIFICATION):")
                 for i, node in enumerate(response.source_nodes):
                     # Check if the node is a standard VDB node or a SQL result node
                     if node.metadata.get('tool_name') == 'sql_table_tool':
-                        print(f"--- Source {i+1}: SQL Result ---")
+                        print(f"--- Source (SQL Result) ---")
                         print(f"Query Run: {node.metadata.get('sql_query', 'N/A')}")
                         print(f"Result Data: {node.text[:400]}")
                     else:
-                        print(f"--- Source {i+1}: PDF Chunk ---")
+                        print(f"--- Source (PDF Chunk) ---")
                         print(f"Source File: {node.metadata.get('file_name', 'N/A')}")
                         print(f"Text Snippet:\n{node.text[:400]}...")
                     print("-" * 15)

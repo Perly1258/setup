@@ -1,22 +1,25 @@
 -- =========================================================================
 -- DATABASE SETUP SCRIPT: PRIVATE MARKETS PORTFOLIO AND CASH FLOWS
--- TARGET DATABASE: PostgreSQL or compatible system (e.g., SQLite via CLI)
+-- TARGET DATABASE: PostgreSQL 
+-- USER: postgres | INITIAL DB: postgres
+-- This script creates the database, schema, and loads data from CSVs 
+-- located in the absolute path: /workspace/setup/data/
 -- =========================================================================
 
 -- 1. DATABASE CREATION AND CONNECTION
--- This command creates the database (must be run while connected to 'postgres' or similar default db)
+-- Creates the target database (must be run from 'postgres' database)
 CREATE DATABASE private_markets_db;
 
--- This command connects to the newly created database to execute the rest of the script
+-- Connects to the newly created database (psql meta-command)
 \c private_markets_db; 
 
 -- -------------------------------------------------------------------------
--- 1. Create PE_Portfolio Table (Static Fund Metadata)
--- Primary Key: Fund_ID
--- Commitment is in Millions of USD (MM USD).
+-- 2. TABLE CREATION (SCHEMAS)
 -- -------------------------------------------------------------------------
+
+-- A. PE_Portfolio Table (Static Fund Metadata)
 CREATE TABLE PE_Portfolio (
-    Fund_ID INTEGER PRIMARY KEY, -- Use INTEGER for explicit IDs
+    Fund_ID INTEGER PRIMARY KEY, -- Primary key for linking
     Fund_Name VARCHAR(255) NOT NULL,
     Vintage_Year INTEGER NOT NULL,
     Primary_Strategy VARCHAR(50) NOT NULL,
@@ -25,33 +28,52 @@ CREATE TABLE PE_Portfolio (
     Comment TEXT
 );
 
--- -------------------------------------------------------------------------
--- 2. Create Fund_Cash_Flows Table (Time-Series Transaction Data)
--- Primary Key: Transaction_ID (uses implicit or explicit IDENTITY depending on DB)
--- Foreign Key: Fund_ID references PE_Portfolio(Fund_ID)
--- Amounts are in Millions of USD (MM USD). NAV is in actual USD.
--- -------------------------------------------------------------------------
+-- B. Fund_Cash_Flows Table (Historical Transaction Data)
 CREATE TABLE Fund_Cash_Flows (
-    Transaction_ID SERIAL PRIMARY KEY, -- SERIAL for PostgreSQL auto-incrementing key
+    Transaction_ID SERIAL PRIMARY KEY, 
     Fund_ID INTEGER NOT NULL,
     Transaction_Date DATE NOT NULL,
     Reporting_Quarter VARCHAR(5) NOT NULL,
-    Transaction_Type VARCHAR(20) NOT NULL, -- e.g., 'Capital Call', 'Distribution', 'NAV Update'
-    Investment_MM_USD NUMERIC(15, 4), -- Negative for calls
-    Fees_MM_USD NUMERIC(15, 4),        -- Negative for calls
-    Return_of_Cost_MM_USD NUMERIC(15, 4), -- Positive for distributions
-    Profit_MM_USD NUMERIC(15, 4),      -- Positive for distributions
-    Quarterly_NAV_USD NUMERIC(20, 2),  -- Actual USD value (not millions)
+    Transaction_Type VARCHAR(20) NOT NULL, 
+    Investment_MM_USD NUMERIC(15, 4), 
+    Fees_MM_USD NUMERIC(15, 4),        
+    Return_of_Cost_MM_USD NUMERIC(15, 4), 
+    Profit_MM_USD NUMERIC(15, 4),      
+    Quarterly_NAV_USD NUMERIC(20, 2),  
     MOIC NUMERIC(5, 2),
     
     FOREIGN KEY (Fund_ID) REFERENCES PE_Portfolio(Fund_ID)
 );
 
+-- C. FUND_MODEL_ASSUMPTIONS Table (Quantitative Inputs for Projection)
+CREATE TABLE FUND_MODEL_ASSUMPTIONS (
+    Primary_Strategy VARCHAR(50) PRIMARY KEY,
+    Expected_MOIC_Gross NUMERIC(4, 2) NOT NULL, 
+    Target_IRR_Net NUMERIC(4, 2) NOT NULL,     
+    Investment_Period_Years INTEGER NOT NULL,  
+    Fund_Life_Years INTEGER NOT NULL,          
+    NAV_Initial_Qtr_Depreciation NUMERIC(5, 4) NOT NULL, -- Numeric J-Curve parameter
+    NAV_Initial_Depreciation_Qtrs INTEGER NOT NULL,
+    J_Curve_Description VARCHAR(50) NOT NULL, 
+    Modeling_Rationale TEXT 
+);
 
--- =========================================================================
--- 3. Data Loading: Load from CSV Files (PostgreSQL COPY Commands)
--- You must first ensure your DB is running and the CSV files are accessible.
--- =========================================================================
+-- D. PROJECTED_CASH_FLOWS Table (Output from Python Engine - REQUIRED by RAG)
+CREATE TABLE PROJECTED_CASH_FLOWS (
+    Projection_ID SERIAL PRIMARY KEY,
+    Fund_ID INTEGER NOT NULL REFERENCES PE_Portfolio(Fund_ID),
+    Projection_Date DATE NOT NULL,
+    Scenario_ID VARCHAR(50) NOT NULL, -- e.g., 'Baseline_5Y_Forecast'
+    Transaction_Type VARCHAR(30) NOT NULL, -- Call, Distribution, NAV
+    Projected_Amount_MM_USD NUMERIC(15, 4),
+    Projected_NAV_MM_USD NUMERIC(15, 4)
+);
+
+
+-- -------------------------------------------------------------------------
+-- 3. DATA LOADING (Using ABSOLUTE Path)
+-- Assumes /workspace/setup is the project root on the remote server
+-- -------------------------------------------------------------------------
 
 -- Load Portfolio Data
 COPY PE_Portfolio (Fund_ID, Fund_Name, Vintage_Year, Primary_Strategy, Sub_Strategy, Total_Commitment_MM_USD, Comment)
@@ -66,45 +88,13 @@ FROM '/workspace/setup/data/Fund_Cash_Flows.csv'
 DELIMITER ','
 CSV HEADER;
 
--- =========================================================================
--- 4. MODEL INPUT ASSUMPTIONS TABLE
--- Used to parameterize the cash flow and NAV projection engine 
--- for each Primary Strategy in the PE_Portfolio table.
--- =========================================================================
 
-CREATE TABLE FUND_MODEL_ASSUMPTIONS (
-    Primary_Strategy VARCHAR(50) PRIMARY KEY,
-    
-    -- 1. RETURN ASSUMPTIONS
-    Expected_MOIC_Gross NUMERIC(4, 2) NOT NULL, 
-    Target_IRR_Net NUMERIC(4, 2) NOT NULL,     
-
-    -- 2. TIMING AND DURATION
-    Investment_Period_Years INTEGER NOT NULL,  
-    Fund_Life_Years INTEGER NOT NULL,          
-    
-    -- 3. QUANTITATIVE J-CURVE PARAMETERS (New & Improved Fields)
-    NAV_Initial_Qtr_Depreciation NUMERIC(5, 4) NOT NULL, -- e.g., -0.0050 for -0.50%
-    NAV_Initial_Depreciation_Qtrs INTEGER NOT NULL,     -- e.g., 6 (quarters)
-    
-    -- 4. QUALITATIVE DESCRIPTION (Kept for LLM interpretation)
-    J_Curve_Description VARCHAR(50) NOT NULL, -- e.g., 'Moderate Drop'
-    Modeling_Rationale TEXT 
-);
-
--- =========================================================================
--- DATA INSERTION: Simulated Quantitative Input Drivers
--- =========================================================================
+-- Load Model Assumptions Data
 COPY FUND_MODEL_ASSUMPTIONS (Primary_Strategy, Expected_MOIC_Gross, Target_IRR_Net, Investment_Period_Years, Fund_Life_Years, NAV_Initial_Qtr_Depreciation, NAV_Initial_Depreciation_Qtrs, J_Curve_Description, Modeling_Rationale)
 FROM '/workspace/setup/data/fund_model_assumptions_data.csv'
 DELIMITER ','
 CSV HEADER;
+
 -- =========================================================================
--- EXECUTION INSTRUCTIONS
--- To run this script and create the database and load data:
--- 1. Ensure PostgreSQL is running.
--- 2. Ensure 'PE_Portfolio.csv' and 'Fund_Cash_Flows.csv' are in the same directory.
--- 3. Run the following command (using user 'psogresql' and assuming you are running this from a shell):
---    psql -U psogresql -d postgres -f private_market_setup.sql
---    (You will be prompted to enter the password 'psogresql')
+-- EXECUTION INSTRUCTIONS: This script must be run by the postgres user.
 -- =========================================================================
