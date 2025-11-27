@@ -27,21 +27,21 @@ logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
 # --- Configuration (Match your local environment and service names) ---
-# FIX: Use absolute path construction for the PDF directory
-BASE_DIR = Path(__file__).resolve().parent.parent
-PDF_DIR = str(BASE_DIR / "documents") # /home/alexander/Projects/financial-rag-model/documents
+# FIX: Use the ABSOLUTE path for the remote server's mounting point
+REMOTE_PROJECT_ROOT = "/workspace/setup"
+PDF_DIR = str(Path("/workspace/setup/documents")) # This resolves to /workspace/setup/documents
+PERSIST_DIR = str(Path(REMOTE_PROJECT_ROOT) / "storage") # Persist VDB cache here
 
 OLLAMA_MODEL = "mistral"     
 EMBEDDING_MODEL = "nomic-embed-text" 
 DB_VECTOR_TABLE = "rag_documents" 
 # CRITICAL: Table list for SQL RAG 
-DB_TABLE_NAMES = ["pe_portfolio", "fund_cash_flows", "projected_cash_flows", "fund_model_assumptions"] 
-PERSIST_DIR = "./storage" 
+DB_TABLE_NAMES = ["pe_portfolio", "historical_cash_flows", "forecast_cash_flows", "modeling_rules"] 
 
 # --- PostgreSQL Configuration (Using hardcoded defaults for seamless initial setup) ---
 DB_USER = "postgres"
 DB_PASS = "postgres" 
-DB_HOST = "localhost"
+DB_HOST = "127.0.0.1" 
 DB_PORT = "5432"
 DB_NAME = "private_markets_db" 
 
@@ -70,10 +70,8 @@ def setup_llm_and_tools():
     
     # 2. Setup PostgreSQL Engine for Structured Data (SQL RAG)
     try:
-        # Create SQLAlchemy engine for all SQL interactions
         sql_engine = create_engine(CONNECTION_STRING)
-        
-        # SQLDatabase exposes the schemas for the LLM to write SQL queries
+        # SQLDatabase initializes the database connection and exposes schemas
         sql_database = SQLDatabase(sql_engine, include_tables=DB_TABLE_NAMES)
         logging.info("Successfully connected to PostgreSQL for Structured Data RAG.")
     except Exception as e:
@@ -90,7 +88,6 @@ def get_vector_query_engine(sql_engine, sql_database):
     """Loads/creates the Vector Index from PDF documents."""
     
     # PGVectorStore connects to PostgreSQL to store the vector embeddings
-    # FIX: Using connection_string eliminates the "engine and async_engine must be provided" ValueError
     vector_store = PGVectorStore(
         connection_string=CONNECTION_STRING, 
         embed_dim=len(Settings.embed_model.get_query_embedding("test")), 
@@ -151,8 +148,9 @@ def create_hybrid_router(sql_database, vector_query_engine):
         ),
         name="sql_table_tool",
         description=(
-            "Use this tool for questions about financial metrics, commitments, NAV, or forecasts. "
-            "It queries PostgreSQL tables: PE_Portfolio, FUND_MODEL_ASSUMPTIONS, and PROJECTED_CASH_FLOWS. "
+            "Use this tool for questions about financial metrics, commitments, NAV (Current), or forecasts (Future). "
+            "It queries PostgreSQL tables: PE_Portfolio (Static), MODELING_RULES (Investment Assumptions), "
+            "HISTORICAL_CASH_FLOWS (Past Transactions), and FORECAST_CASH_FLOWS (Future Projections)."
             "Example queries: 'What is the total commitment for Venture Capital?', 'Projected NAV for Fund X in Q4 2027'."
         )
     )
