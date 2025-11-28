@@ -1,161 +1,70 @@
 import os
 import sys
 import logging
-from pathlib import Path
-
-# --- LlamaIndex/PostgreSQL Imports ---
-from sqlalchemy import create_engine
-from llama_index.core import (
-    SimpleDirectoryReader, 
-    VectorStoreIndex, 
-    StorageContext, 
-    Settings,
-    SQLDatabase, 
-    load_index_from_storage,
-    get_response_synthesizer
-)
-from llama_index.core.node_parser import SentenceSplitter 
-from llama_index.llms.ollama import Ollama
-from llama_index.embeddings.ollama import OllamaEmbedding
-from llama_index.vector_stores.postgres import PGVectorStore 
+from llama_index.core import Settings
 from llama_index.core.query_engine import RouterQueryEngine
 from llama_index.core.tools import QueryEngineTool
 from llama_index.core.selectors import LLMSingleSelector 
+from llama_index.llms.ollama import Ollama
+from llama_index.embeddings.ollama import OllamaEmbedding
+
+# Import the two modular RAG components
+from pdf_rag_module import get_vector_query_engine
+from sql_rag_module import get_sql_query_engine
 
 # Configure logging
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 logging.getLogger().addHandler(logging.StreamHandler(stream=sys.stdout))
 
-# --- Configuration (Match your local environment and service names) ---
-# FIX: Use the ABSOLUTE path for the remote server's mounting point
-REMOTE_PROJECT_ROOT = "/workspace/setup"
-PDF_DIR = str(Path("/workspace/setup/documents")) # This resolves to /workspace/setup/documents
-PERSIST_DIR = str(Path(REMOTE_PROJECT_ROOT) / "storage") # Persist VDB cache here
-
+# --- Configuration ---
 OLLAMA_MODEL = "mistral"     
 EMBEDDING_MODEL = "nomic-embed-text" 
-DB_VECTOR_TABLE = "rag_documents" 
-# CRITICAL: Table list for SQL RAG 
-DB_TABLE_NAMES = ["pe_portfolio", "historical_cash_flows", "forecast_cash_flows", "modeling_rules"] 
 
-# --- PostgreSQL Configuration (Using hardcoded defaults for seamless initial setup) ---
-DB_USER = "postgres"
-DB_PASS = "postgres" 
-DB_HOST = "127.0.0.1" 
-DB_PORT = "5432"
-DB_NAME = "private_markets_db" 
-
-CONNECTION_STRING = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Connection string is defined in sql_rag_module, but we need the host for Ollama
 OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434") 
+# Get connection string from SQL module to pass to PDF module
+from sql_rag_module import CONNECTION_STRING, DB_NAME
 
 # System prompt to guide the LLM's behavior (Crucial for routing and synthesis)
 SYSTEM_PROMPT = (
-    "You are a Hybrid Financial Analyst specialized in alternative assets. "
+    "You are a Hybrid Financial Analyst specialized in Private Equity and alternative assets. "
     "Your primary goal is to answer questions using two distinct sources: "
-    "1. A Vector Store (for definitions, methodology, and documents). "
-    "2. A SQL Database (for quantitative financial facts, projections, and numerical data). "
-    "Always reference the source (the specific document or the table data) when possible. "
+    "1. The 'vector_document_tool' (for definitions, methodology, and unstructured PDF content). "
+    "2. The 'sql_table_tool' (for quantitative financial facts, projections, and numerical data). "
+    "You MUST use the appropriate tool before synthesizing an answer. "
+    "Always reference the source (the specific document or the table data/query used) when possible. "
+    "Be concise and professional."
 )
 
 # --------------------------------------------------------------------------
-# 1. SETUP: LLM, EMBEDDING, & CONNECTIONS
+# 1. SETUP: LLM, EMBEDDING, & TOOLS
 # --------------------------------------------------------------------------
 
-def setup_llm_and_tools():
-    """Initializes LLM, embedding model, and database engines."""
+def setup_environment_and_tools():
+    """Initializes LLM, embedding model, and both query engines."""
     
     # 1. Initialize LLM and Embedding Model (Running locally via Ollama)
-    Settings.llm = Ollama(model=OLLAMA_MODEL, base_url=OLLAMA_HOST, system_prompt=SYSTEM_PROMPT, request_timeout=30.0)
-    Settings.embed_model = OllamaEmbedding(model_name=EMBEDDING_MODEL, base_url=OLLAMA_HOST)
+    logger = logging.getLogger(__name__)
+    logger.info(f"Initializing LLM ({OLLAMA_MODEL}) and Embedding Model ({EMBEDDING_MODEL})...")
     
-    # 2. Setup PostgreSQL Engine for Structured Data (SQL RAG)
+    # Set global LlamaIndex settings
     try:
-        sql_engine = create_engine(CONNECTION_STRING)
-        # SQLDatabase initializes the database connection and exposes schemas
-        sql_database = SQLDatabase(sql_engine, include_tables=DB_TABLE_NAMES)
-        logging.info("Successfully connected to PostgreSQL for Structured Data RAG.")
+        # INCREASED TIMEOUT to 120.0 seconds for stability on remote hosts (Vast.ai)
+        Settings.llm = Ollama(model=OLLAMA_MODEL, base_url=OLLAMA_HOST, system_prompt=SYSTEM_PROMPT, request_timeout=120.0)
+        # Using a fixed dimension for the embedding model if necessary, but letting LlamaIndex infer is usually best
+        Settings.embed_model = OllamaEmbedding(model_name=EMBEDDING_MODEL, base_url=OLLAMA_HOST)
     except Exception as e:
-        logging.error(f"Failed to connect to PostgreSQL. Ensure credentials, host, and DB name are correct: {e}")
+        logger.error(f"Failed to initialize Ollama LLM or Embedding model. Ensure Ollama service is running and accessible at {OLLAMA_HOST}. Error: {e}")
         sys.exit(1)
-        
-    return sql_engine, sql_database
 
-# --------------------------------------------------------------------------
-# 2. INDEXING: VECTOR STORE (Unstructured PDF RAG)
-# --------------------------------------------------------------------------
-
-def get_vector_query_engine(sql_engine, sql_database):
-    """Loads/creates the Vector Index from PDF documents."""
+    # 2. Get the two specialized tools
+    # Structured Data Tool (SQL RAG)
+    _, sql_tool = get_sql_query_engine()
     
-    # PGVectorStore connects to PostgreSQL to store the vector embeddings
-    vector_store = PGVectorStore(
-        connection_string=CONNECTION_STRING, 
-        embed_dim=len(Settings.embed_model.get_query_embedding("test")), 
-        table_name=DB_VECTOR_TABLE,
-        schema_name="public",
-    )
+    # Unstructured Data Tool (PDF RAG)
+    vector_query_engine = get_vector_query_engine(CONNECTION_STRING)
     
-    try:
-        # Check if the persist directory exists (for LlamaIndex internal cache)
-        if Path(PERSIST_DIR).exists():
-             # Attempt to load existing index from local storage cache
-            storage_context = StorageContext.from_defaults(vector_store=vector_store, persist_dir=PERSIST_DIR)
-            index = load_index_from_storage(storage_context)
-            logging.info("Loaded existing Vector Index from disk.")
-            
-        else:
-            raise FileNotFoundError # Trigger creation logic if no local cache exists
-    
-    except Exception as e:
-        logging.info(f"Indexing required or error loading index: {e}")
-        
-        # Load PDF documents from the documents folder (using absolute path)
-        documents = SimpleDirectoryReader(PDF_DIR).load_data()
-        
-        # Parse nodes and create index
-        parser = SentenceSplitter(chunk_size=1024, chunk_overlap=20)
-        nodes = parser.get_nodes_from_documents(documents)
-        
-        # Create StorageContext using the vector_store instance
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        
-        index = VectorStoreIndex(
-            nodes,
-            storage_context=storage_context
-        )
-        # Save the index metadata locally (for faster startup next time)
-        index.storage_context.persist(persist_dir=PERSIST_DIR)
-        logging.info("New Vector Index created and saved.")
-
-    # Define the Query Engine for Unstructured Data
-    vector_query_engine = index.as_query_engine(
-        similarity_top_k=5, 
-        response_synthesizer=get_response_synthesizer(streaming=True)
-    )
-    return vector_query_engine
-
-# --------------------------------------------------------------------------
-# 3. ROUTER: HYBRID RAG ENGINE
-# --------------------------------------------------------------------------
-
-def create_hybrid_router(sql_database, vector_query_engine):
-    """Creates the router to choose between the SQL (structured) and Vector (unstructured) engines."""
-    
-    # 1. Define the Structured Data Tool (SQL RAG)
-    sql_tool = QueryEngineTool.from_defaults(
-        query_engine=sql_database.as_query_engine(
-            synthesize_response=True
-        ),
-        name="sql_table_tool",
-        description=(
-            "Use this tool for questions about financial metrics, commitments, NAV (Current), or forecasts (Future). "
-            "It queries PostgreSQL tables: PE_Portfolio (Static), MODELING_RULES (Investment Assumptions), "
-            "HISTORICAL_CASH_FLOWS (Past Transactions), and FORECAST_CASH_FLOWS (Future Projections)."
-            "Example queries: 'What is the total commitment for Venture Capital?', 'Projected NAV for Fund X in Q4 2027'."
-        )
-    )
-    
-    # 2. Define the Unstructured Data Tool (PDF RAG)
+    # Define the final vector tool using the engine initialized in the separate module
     vector_tool = QueryEngineTool.from_defaults(
         query_engine=vector_query_engine,
         name="vector_document_tool",
@@ -165,7 +74,12 @@ def create_hybrid_router(sql_database, vector_query_engine):
         )
     )
     
-    # 3. Combine tools into the Router Query Engine
+    return sql_tool, vector_tool
+
+def create_hybrid_router(sql_tool: QueryEngineTool, vector_tool: QueryEngineTool) -> RouterQueryEngine:
+    """Creates the router to choose between the SQL (structured) and Vector (unstructured) tools."""
+    
+    # Combine tools into the Router Query Engine
     router_query_engine = RouterQueryEngine(
         selector=LLMSingleSelector.from_defaults(),
         query_engine_tools=[sql_tool, vector_tool]
@@ -175,19 +89,16 @@ def create_hybrid_router(sql_database, vector_query_engine):
     return router_query_engine
 
 # --------------------------------------------------------------------------
-# 4. MAIN CHAT LOOP
+# 2. MAIN CHAT LOOP
 # --------------------------------------------------------------------------
 
 if __name__ == "__main__":
     
-    # 1. Setup connections
-    sql_engine, sql_database = setup_llm_and_tools()
+    # 1. Setup environment and tools
+    sql_tool, vector_tool = setup_environment_and_tools()
     
-    # 2. Build the Vector Index
-    vector_query_engine = get_vector_query_engine(sql_engine, sql_database)
-    
-    # 3. Create the Hybrid Router
-    query_engine = create_hybrid_router(sql_database, vector_query_engine)
+    # 2. Create the Hybrid Router
+    query_engine = create_hybrid_router(sql_tool, vector_tool)
 
     print("\n" + "=" * 50)
     print("--- Hybrid RAG Financial Analyst Ready ---")
@@ -196,12 +107,12 @@ if __name__ == "__main__":
     print("=" * 50)
 
     while True:
-        question = input("Your Question: ")
-        if question.lower() in ["quit", "exit"]:
-            print("Goodbye! Shutting down LLM connection.")
-            break
-        
         try:
+            question = input("Your Question: ")
+            if question.lower() in ["quit", "exit"]:
+                print("Goodbye! Shutting down LLM connection.")
+                break
+            
             print("\nThinking...")
             # Execute the query through the router
             response = query_engine.query(question)
@@ -210,7 +121,7 @@ if __name__ == "__main__":
             print("\n" + "=" * 50)
             print(f"ROUTING DECISION: {response.metadata.get('selector_result', 'N/A')}")
             
-            # Show retrieved context (either from SQL execution or VDB text chunks)
+            # Show retrieved context 
             if response.source_nodes:
                 print("RETRIEVED CONTEXT (VERIFICATION):")
                 for i, node in enumerate(response.source_nodes):
@@ -228,8 +139,8 @@ if __name__ == "__main__":
                   print("No specific context nodes returned (Synthesis was direct).")
             print("=" * 50)
             
-            # --- MISTRAL ANSWER (Final Synthesis) ---
-            print(f"💡 Mistral Answer: {str(response)}")
+            # --- LLM ANSWER (Final Synthesis) ---
+            print(f"💡 LLM Answer: {str(response)}")
             print("-" * 50)
             
         except Exception as e:
