@@ -23,6 +23,8 @@ sudo -u postgres createdb rag_db
 sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d postgres -f /workspace/setup/db/setup/private_market_setup.sql
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d postgres -f /workspace/setup/db/setup/rag_annotations.sql
+
 
 
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
@@ -41,7 +43,7 @@ echo "Installing core Python packages..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
-pip install spyder-kernels==3.0.5
+pip install spyder-kernels
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
             llama-index-readers-file pymupdf tabulate
@@ -69,7 +71,7 @@ deactivate
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 # Note: Changed /Workspace/ to /workspace/
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
-chmod +x /workspace/*.sh
+chmod +x /workspace/setup/*.sh
 
 echo "Onstart script installed and made executable."
 
