@@ -49,15 +49,17 @@ pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-olla
             llama-index-readers-file pymupdf tabulate open-webui
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
-# Start the Ollama server in the background
+# UPDATED: Use system OLLAMA_HOST if set, otherwise default to 0.0.0.0:21434
+export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:21434}"
+echo "Starting Ollama on: $OLLAMA_HOST"
+
 ollama serve &
 # Give the server a moment to start (optional, but safer)
 sleep 5 
 
+# We specify the address here since we changed the port to 21434
 ollama pull mistral
 ollama pull nomic-embed-text
-# Note: bge-small is often superseded by nomic-embed-text, but kept for completeness
-# ollama pull bge-small 
 
 CONNECTION_FILE="/workspace/setup/remotekernel.json"
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
@@ -65,23 +67,25 @@ echo "Starting remote Python kernel and saving connection details to $CONNECTION
 # Start the remote kernel in the background
 python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
 
-# FIX: Deactivate the virtual environment to run global scripts if needed, 
-# BUT open-webui was installed in the venv, so we need to use the venv's python/bin.
-# Re-activating just in case logic flow changes, or calling binary directly.
+# Source venv again to ensure we use the installed open-webui
 source "$VENV_PATH/bin/activate"
 
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
-# Note: Changed /Workspace/ to /workspace/
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /workspace/setup/*.sh
 
-# --- SIMPLE WEBUI LAUNCH ---
+# --- 4. START OPEN WEBUI (Added) ---
 echo "🚀 Launching Open WebUI on Port 8080..."
-# We kill any existing process on 8080 first
+# Clean up port 8080 just in case
 fuser -k 8080/tcp > /dev/null 2>&1 || true
-# We use nohup to keep it running in background
-# We explicitly allow 0.0.0.0 to make it accessible outside container
-nohup env HOST=0.0.0.0 PORT=8080 DATA_DIR=/workspace/webui_data open-webui serve > /workspace/webui.log 2>&1 &
 
-echo "✅ Open WebUI started in background. Logs at /workspace/webui.log"
+# Extract the port from OLLAMA_HOST to configure WebUI correctly
+# This grabs the numbers after the last colon (e.g. 21434 from 0.0.0.0:21434)
+OLLAMA_PORT=${OLLAMA_HOST##*:}
+
+# Start WebUI in background
+# We dynamically set OLLAMA_BASE_URL to match whatever port Ollama is actually running on
+nohup env OLLAMA_BASE_URL=http://127.0.0.1:$OLLAMA_PORT HOST=0.0.0.0 PORT=8080 DATA_DIR=/workspace/webui_data open-webui serve > /workspace/webui.log 2>&1 &
+
+echo "✅ Open WebUI running. Logs: /workspace/webui.log"
 echo "--- PROVISIONING SCRIPT COMPLETE (ML Stack Ready) ---"
