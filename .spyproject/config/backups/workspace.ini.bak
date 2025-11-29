@@ -4,7 +4,7 @@ save_data_on_exit = True
 save_history = True
 save_non_project_files = False
 project_type = 'empty-project-type'
-recent_files = ['src/sql_rag_module.py', 'data/PE_Portfolio.csv', 'src/generate cash flow.py', 'src/pdf_rag_module.py', 'setup_ml_only.sh', 'src/pg_hba.conf']
+recent_files = ['db/setup/rag_annotations.sql', 'setup_ml_only.sh', 'src/sql_rag_module.py', '../connect_vast.sh']
 
 [main]
 version = 0.2.0

@@ -46,7 +46,7 @@ pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 pip install spyder-kernels
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf tabulate
+            llama-index-readers-file pymupdf tabulate open-webui
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 # Start the Ollama server in the background
@@ -65,14 +65,23 @@ echo "Starting remote Python kernel and saving connection details to $CONNECTION
 # Start the remote kernel in the background
 python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
 
-# FIX: Deactivate the virtual environment
-deactivate
+# FIX: Deactivate the virtual environment to run global scripts if needed, 
+# BUT open-webui was installed in the venv, so we need to use the venv's python/bin.
+# Re-activating just in case logic flow changes, or calling binary directly.
+source "$VENV_PATH/bin/activate"
 
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 # Note: Changed /Workspace/ to /workspace/
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /workspace/setup/*.sh
 
-echo "Onstart script installed and made executable."
+# --- SIMPLE WEBUI LAUNCH ---
+echo "🚀 Launching Open WebUI on Port 8080..."
+# We kill any existing process on 8080 first
+fuser -k 8080/tcp > /dev/null 2>&1 || true
+# We use nohup to keep it running in background
+# We explicitly allow 0.0.0.0 to make it accessible outside container
+nohup env HOST=0.0.0.0 PORT=8080 DATA_DIR=/workspace/webui_data open-webui serve > /workspace/webui.log 2>&1 &
 
+echo "✅ Open WebUI started in background. Logs at /workspace/webui.log"
 echo "--- PROVISIONING SCRIPT COMPLETE (ML Stack Ready) ---"
