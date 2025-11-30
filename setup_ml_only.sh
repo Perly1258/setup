@@ -66,10 +66,10 @@ chmod +x /workspace/setup/*.sh
 echo "🚀 Launching RAG API & WebUI..."
 
 # A. Start the RAG API Server (Backend)
-# We must ensure this runs first so WebUI can find it
+# FIX: Use the virtual environment python explicitly
 echo "   - Starting RAG API on Port 9000..."
 cd /workspace/setup/src
-nohup python rag_api_server.py > /workspace/rag_api.log 2>&1 &
+nohup "$VENV_PATH/bin/python" rag_api_server.py > /workspace/rag_api.log 2>&1 &
 sleep 5
 
 # B. Start Open WebUI (Frontend)
@@ -80,6 +80,7 @@ fuser -k 8080/tcp > /dev/null 2>&1 || true
 # CRITICAL: We extract the Ollama Port and set OPENAI_API_BASE_URL
 OLLAMA_PORT=${OLLAMA_HOST##*:}
 
+# We also use the venv python/bin path for open-webui to be safe
 nohup env \
   HOST=0.0.0.0 \
   PORT=8080 \
@@ -88,7 +89,7 @@ nohup env \
   ENABLE_OPENAI_API=true \
   OPENAI_API_BASE_URL="http://127.0.0.1:9000/v1" \
   OPENAI_API_KEY="sk-auto-config" \
-  open-webui serve > /workspace/webui.log 2>&1 &
+  "$VENV_PATH/bin/open-webui" serve > /workspace/webui.log 2>&1 &
 
 echo "✅ ALL SYSTEMS GO!"
 echo "   - WebUI: http://localhost:8080"

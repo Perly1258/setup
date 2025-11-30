@@ -87,25 +87,20 @@ def setup_environment_and_engine():
     else:
         logger.info("Creating new index from documents...")
         if not os.path.exists(PDF_DIR):
-             raise FileNotFoundError(f"PDF Directory not found: {PDF_DIR}")
+             # Create dir if missing to prevent crash
+             Path(PDF_DIR).mkdir(parents=True, exist_ok=True)
+             logger.warning(f"Created missing PDF directory: {PDF_DIR}")
              
         documents = SimpleDirectoryReader(PDF_DIR).load_data()
-        storage_context = StorageContext.from_defaults(vector_store=vector_store)
-        index = VectorStoreIndex.from_documents(
-            documents, storage_context=storage_context
-        )
-        index.storage_context.persist(persist_dir=PERSIST_DIR)
+        # Handle empty docs case
+        if not documents:
+            logger.warning("No PDFs found. Creating empty index.")
+            index = VectorStoreIndex.from_documents([], storage_context=StorageContext.from_defaults(vector_store=vector_store))
+        else:
+            storage_context = StorageContext.from_defaults(vector_store=vector_store)
+            index = VectorStoreIndex.from_documents(
+                documents, storage_context=storage_context
+            )
+            index.storage_context.persist(persist_dir=PERSIST_DIR)
 
     return index.as_query_engine(streaming=True)
-
-# Main loop for standalone testing
-if __name__ == "__main__":
-    try:
-        engine = setup_environment_and_engine()
-        print("\n✅ System Ready. Type 'exit' to quit.\n")
-        while True:
-            q = input("Q: ")
-            if q.lower() in ["exit", "quit"]: break
-            print(f"A: {engine.query(q)}")
-    except Exception as e:
-        logger.error(f"Runtime Error: {e}")
