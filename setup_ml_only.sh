@@ -62,8 +62,5 @@ echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /workspace/setup/*.sh
 
-# --- 4. START RAG API & OPEN WEBUI (Auto-Connected) ---
-echo "🚀 Launching RAG API & WebUI..."
-
 
 
