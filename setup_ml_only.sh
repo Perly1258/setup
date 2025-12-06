@@ -56,11 +56,31 @@ CONNECTION_FILE="/workspace/setup/remotekernel.json"
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
 python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
 
+# --- START: AUTO-ACTIVATE VENV IN BASHRC ---
+VENV_ACTIVATE_PATH="$VENV_PATH/bin/activate" 
+ACTIVATE_CMD="source $VENV_ACTIVATE_PATH"
+
+echo "Attempting to set auto-activation in ~/.bashrc..."
+
+if [ -f "$VENV_ACTIVATE_PATH" ]; then
+    if ! grep -q "$ACTIVATE_CMD" ~/.bashrc; then
+        echo "" >> ~/.bashrc
+        echo "# --- Auto-Activated Python Virtual Environment ---" >> ~/.bashrc
+        echo "if [ -f \"$VENV_ACTIVATE_PATH\" ]; then" >> ~/.bashrc
+        echo "    $ACTIVATE_CMD" >> ~/.bashrc
+        echo "fi" >> ~/.bashrc
+        echo "# -----------------------------------------------" >> ~/.bashrc
+        echo "✅ Future terminals will auto-activate the venv."
+    else
+        echo "⚠️ Auto-activation command already exists in ~/.bashrc. Skipping."
+    fi
+else
+    echo "❌ WARNING: Venv activation script not found at $VENV_ACTIVATE_PATH. Auto-activation skipped."
+fi
+# --- END: AUTO-ACTIVATE VENV IN BASHRC ---
+
 source "$VENV_PATH/bin/activate"
 
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /workspace/setup/*.sh
-
-
-
