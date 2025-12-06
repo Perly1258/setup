@@ -18,8 +18,8 @@ BASE_URL = "http://localhost:8000"
 
 # Admin Credentials (MUST MATCH YOUR OPEN WEBUI ADMIN ACCOUNT)
 # You must create this account manually in the browser first if it doesn't exist.
-LOGIN_EMAIL = "admin@example.com"
-LOGIN_PASSWORD = "password123"
+LOGIN_EMAIL = "alexander_foster@yahoo.com"
+LOGIN_PASSWORD = "Frodo_123"
 
 # Tool Metadata
 TOOL_ID = "rag_retrieval_tool"  # Unique ID for the system

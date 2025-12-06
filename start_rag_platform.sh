@@ -1,108 +1,59 @@
 #!/bin/bash
-# start_rag_platform.sh
 
-# ==============================================================================
-# 🚀 RAG PLATFORM LAUNCHER
-# ==============================================================================
-# 1. RAG API (FastAPI Backend) -> Port 9000
-# 2. Open WebUI (Frontend) -> Port 8000
-# 3. Tool Bridge -> Auto-injects rag_tool.py
-# ==============================================================================
+# Hardcoded Paths
+VENV_PATH="/workspace/rag_env"
+DATA_DIR="/workspace/webui_data"
+TOOL_SCRIPT="/workspace/setup/rag_retrieval_tool.py"
+REGISTER_SCRIPT="/workspace/setup/register_webui_tool.py"
 
-# --- 1. ARCHITECTURE CONFIGURATION ---
-
-WORKSPACE_DIR="/workspace"
-SETUP_DIR="$WORKSPACE_DIR/setup"
-VENV_PATH="$WORKSPACE_DIR/rag_env"
-
-WEBUI_PORT=8000
-RAG_API_PORT=9000
-OLLAMA_PORT=21434
-
-# Using the files you provided
-TOOL_PAYLOAD="$SETUP_DIR/rag_tool.py"
-REGISTER_SCRIPT="$SETUP_DIR/register_webui_tool.py"
-
+# Hardcoded Env Vars
 export POSTGRES_USER="postgres"
 export POSTGRES_PASSWORD="postgres"
 export DB_HOST="localhost"
 export DB_PORT="5432"
-export OLLAMA_HOST="localhost:$OLLAMA_PORT"
+export OLLAMA_HOST="localhost:21434"
+export DATA_DIR="$DATA_DIR"
 
-# --- 2. INITIALIZATION ---
+# Ensure directories exist
+mkdir -p "$DATA_DIR"
+mkdir -p documents
+mkdir -p storage_pdf
 
-echo "--- [1/5] Initializing Environment ---"
-if [ ! -f "$VENV_PATH/bin/activate" ]; then
-    echo "❌ CRITICAL ERROR: Virtual environment missing at $VENV_PATH"
-    exit 1
-fi
+# Kill any existing processes on ports
+fuser -k 8000/tcp > /dev/null 2>&1
+fuser -k 9000/tcp > /dev/null 2>&1
+fuser -k 8080/tcp > /dev/null 2>&1
+
+# Activate Venv
 source "$VENV_PATH/bin/activate"
 
-# --- 3. STARTING BACKEND (RAG API) ---
-
-echo "--- [2/5] Launching RAG API Backend (Port $RAG_API_PORT) ---"
-# Uses the updated src/api_server.py
-uvicorn src.api_server:app --host 0.0.0.0 --port $RAG_API_PORT &
+# Start Backend (RAG API) on 9000
+uvicorn src.api_server:app --host 0.0.0.0 --port 9000 &
 RAG_PID=$!
-echo "✅ Backend Service Started (PID: $RAG_PID)"
 
-# --- 4. STARTING FRONTEND (OPEN WEBUI) ---
-
-echo "--- [3/5] Launching Open WebUI Frontend (Port $WEBUI_PORT) ---"
-if ! command -v open-webui &> /dev/null; then
-    echo "❌ CRITICAL ERROR: 'open-webui' package not installed."
-    kill $RAG_PID
-    exit 1
-fi
-
-# FIX: Use Environment Variables and 'serve' command
-export HOST=0.0.0.0
-export PORT=$WEBUI_PORT
-open-webui serve &
+# Start Frontend (Open WebUI) on 8000
+# EXPLICITLY passing DATA_DIR here guarantees the process receives it
+# ADDED: WEBUI_SECRET_KEY to prevent startup errors or session invalidation
+export WEBUI_SECRET_KEY="t0p-s3cr3t-k3y-fix"
+DATA_DIR="$DATA_DIR" open-webui serve --host 0.0.0.0 --port 8000 &
 WEBUI_PID=$!
 
-echo "✅ Frontend Service Started (PID: $WEBUI_PID)"
-
-# --- 5. HEALTH CHECK ---
-
-echo "--- [4/5] Waiting for System Readiness ---"
-MAX_RETRIES=30
+# Wait for Frontend to be ready
 COUNT=0
-WEBUI_READY=false
-
-while [ $COUNT -lt $MAX_RETRIES ]; do
-    if curl -s "http://localhost:$WEBUI_PORT/health" > /dev/null; then
-        WEBUI_READY=true
-        echo "✅ System Online."
+while [ $COUNT -lt 30 ]; do
+    if curl -s "http://localhost:8000/health" > /dev/null; then
         break
     fi
-    echo -n "."
     sleep 2
     COUNT=$((COUNT+1))
 done
 
-# --- 6. TOOL REGISTRATION ---
-
-if [ "$WEBUI_READY" = true ]; then
-    echo "--- [5/5] Registering RAG Tool ---"
-    if [ -f "$REGISTER_SCRIPT" ] && [ -f "$TOOL_PAYLOAD" ]; then
-        python3 "$REGISTER_SCRIPT" "$TOOL_PAYLOAD"
-    else
-        echo "❌ Error: Tool scripts missing."
-    fi
-else
-    echo "⚠️  WARNING: Frontend initialization timed out."
+# Register Tool if scripts exist
+if [ -f "$REGISTER_SCRIPT" ] && [ -f "$TOOL_SCRIPT" ]; then
+    python3 "$REGISTER_SCRIPT" "$TOOL_SCRIPT"
 fi
 
-# --- 7. KEEP ALIVE ---
-
-echo "========================================================"
-echo "🚀 RAG PLATFORM IS LIVE"
-echo "========================================================"
-echo "🖥️  Frontend:  http://localhost:$WEBUI_PORT"
-echo "🔌  API:       http://localhost:$RAG_API_PORT"
-echo "========================================================"
-echo "Press CTRL+C to stop."
-
+# Keep alive
+echo "RAG Platform Running on 8000 (UI) and 9000 (API)"
 wait $RAG_PID
 kill $WEBUI_PID
