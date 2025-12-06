@@ -40,7 +40,7 @@ pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 pip install spyder-kernels
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf tabulate open-webui
+            llama-index-readers-file pymupdf tabulate 
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:21434}"

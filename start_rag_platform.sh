@@ -4,29 +4,25 @@
 # ==============================================================================
 # 🚀 RAG PLATFORM LAUNCHER
 # ==============================================================================
-# Orchestrates the complete RAG Application Stack:
-# 1. RAG API (FastAPI Backend) -> Processes vector search & LLM logic
-# 2. Open WebUI (Frontend) -> Provides the chat interface
-# 3. Tool Bridge -> Auto-injects the Python tool to connect Frontend to Backend
+# 1. RAG API (FastAPI Backend) -> Port 9000
+# 2. Open WebUI (Frontend) -> Port 8000
+# 3. Tool Bridge -> Auto-injects rag_tool.py
 # ==============================================================================
 
 # --- 1. ARCHITECTURE CONFIGURATION ---
 
-# Directory Paths
 WORKSPACE_DIR="/workspace"
 SETUP_DIR="$WORKSPACE_DIR/setup"
 VENV_PATH="$WORKSPACE_DIR/rag_env"
 
-# Network Ports (Service Bindings)
-WEBUI_PORT=8000        # Frontend User Interface
-RAG_API_PORT=9000      # RAG Backend API
-OLLAMA_PORT=21434      # LLM Inference Service
+WEBUI_PORT=8000
+RAG_API_PORT=9000
+OLLAMA_PORT=21434
 
-# Component Scripts
-TOOL_PAYLOAD="$SETUP_DIR/rag_retrieval_tool.py"      # The "Bridge" code
-REGISTER_SCRIPT="$SETUP_DIR/register_webui_tool.py"  # The "Installer" script
+# Using the files you provided
+TOOL_PAYLOAD="$SETUP_DIR/rag_tool.py"
+REGISTER_SCRIPT="$SETUP_DIR/register_webui_tool.py"
 
-# Credentials & Service Links
 export POSTGRES_USER="postgres"
 export POSTGRES_PASSWORD="postgres"
 export DB_HOST="localhost"
@@ -36,50 +32,40 @@ export OLLAMA_HOST="localhost:$OLLAMA_PORT"
 # --- 2. INITIALIZATION ---
 
 echo "--- [1/5] Initializing Environment ---"
-
 if [ ! -f "$VENV_PATH/bin/activate" ]; then
     echo "❌ CRITICAL ERROR: Virtual environment missing at $VENV_PATH"
-    echo "   Please run setup_ml_only.sh first."
     exit 1
 fi
-
-echo "✅ Activating Python Virtual Environment..."
 source "$VENV_PATH/bin/activate"
 
 # --- 3. STARTING BACKEND (RAG API) ---
 
-echo ""
-echo "--- [2/5] Launching RAG API Backend ---"
-echo "   Endpoint: http://0.0.0.0:$RAG_API_PORT"
-
-# Start FastAPI/Uvicorn in background
+echo "--- [2/5] Launching RAG API Backend (Port $RAG_API_PORT) ---"
+# Uses the updated src/api_server.py
 uvicorn src.api_server:app --host 0.0.0.0 --port $RAG_API_PORT &
 RAG_PID=$!
 echo "✅ Backend Service Started (PID: $RAG_PID)"
 
 # --- 4. STARTING FRONTEND (OPEN WEBUI) ---
 
-echo ""
-echo "--- [3/5] Launching Open WebUI Frontend ---"
-echo "   Interface: http://0.0.0.0:$WEBUI_PORT"
-
+echo "--- [3/5] Launching Open WebUI Frontend (Port $WEBUI_PORT) ---"
 if ! command -v open-webui &> /dev/null; then
     echo "❌ CRITICAL ERROR: 'open-webui' package not installed."
     kill $RAG_PID
     exit 1
 fi
 
-# Start WebUI in background
-open-webui --host 0.0.0.0 --port $WEBUI_PORT &
+# FIX: Use Environment Variables and 'serve' command
+export HOST=0.0.0.0
+export PORT=$WEBUI_PORT
+open-webui serve &
 WEBUI_PID=$!
+
 echo "✅ Frontend Service Started (PID: $WEBUI_PID)"
 
-# --- 5. HEALTH CHECK & SYNC ---
+# --- 5. HEALTH CHECK ---
 
-echo ""
 echo "--- [4/5] Waiting for System Readiness ---"
-echo "   Polling WebUI health status..."
-
 MAX_RETRIES=30
 COUNT=0
 WEBUI_READY=false
@@ -95,41 +81,28 @@ while [ $COUNT -lt $MAX_RETRIES ]; do
     COUNT=$((COUNT+1))
 done
 
-if [ "$WEBUI_READY" = false ]; then
-    echo ""
-    echo "⚠️  WARNING: Frontend initialization timed out."
-    echo "   Auto-configuration may fail."
-fi
-
 # --- 6. TOOL REGISTRATION ---
 
-echo ""
-echo "--- [5/5] Registering RAG Tool ---"
-
-if [ -f "$REGISTER_SCRIPT" ] && [ -f "$TOOL_PAYLOAD" ]; then
-    echo "   Injecting Retrieval Tool into WebUI..."
-    python3 "$REGISTER_SCRIPT" "$TOOL_PAYLOAD"
+if [ "$WEBUI_READY" = true ]; then
+    echo "--- [5/5] Registering RAG Tool ---"
+    if [ -f "$REGISTER_SCRIPT" ] && [ -f "$TOOL_PAYLOAD" ]; then
+        python3 "$REGISTER_SCRIPT" "$TOOL_PAYLOAD"
+    else
+        echo "❌ Error: Tool scripts missing."
+    fi
 else
-    echo "❌ Error: Tool installation scripts missing."
-    echo "   Skipping tool registration."
+    echo "⚠️  WARNING: Frontend initialization timed out."
 fi
 
-# --- 7. PLATFORM STATUS ---
+# --- 7. KEEP ALIVE ---
 
-echo ""
 echo "========================================================"
 echo "🚀 RAG PLATFORM IS LIVE"
 echo "========================================================"
 echo "🖥️  Frontend:  http://localhost:$WEBUI_PORT"
 echo "🔌  API:       http://localhost:$RAG_API_PORT"
 echo "========================================================"
-echo "   Log: Press CTRL+C to shutdown platform."
+echo "Press CTRL+C to stop."
 
-# Wait for RAG API. If it stops, script ends.
 wait $RAG_PID
-
-# --- 8. GRACEFUL SHUTDOWN ---
-echo ""
-echo "🔻 Shutting down platform..."
 kill $WEBUI_PID
-echo "Done."
