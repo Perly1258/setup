@@ -40,7 +40,7 @@ DB_NAME = os.environ.get("DB_NAME", "private_markets_db").strip()
 
 # --- Ollama Config (Auto-detects Vast.ai port) ---
 # Automatically picks up 'http://0.0.0.0:21434' from your env if on Vast
-OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434").strip()
+OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:21434").strip()
 
 def init_llm():
     """
