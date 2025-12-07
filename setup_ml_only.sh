@@ -34,7 +34,7 @@ fi
 source "$VENV_PATH/bin/activate"
 
 echo "Installing core Python packages..."
-pip install open-webui torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
 pip install spyder-kernels
