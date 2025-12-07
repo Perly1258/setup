@@ -2,7 +2,7 @@
 
 # Hardcoded Paths
 VENV_PATH="/workspace/rag_env"
-DATA_DIR="/workspace/webui_data"
+DATA_DIR="/workspace/setup/webui_data"
 TOOL_SCRIPT="/workspace/setup/rag_retrieval_tool.py"
 REGISTER_SCRIPT="/workspace/setup/register_webui_tool.py"
 
