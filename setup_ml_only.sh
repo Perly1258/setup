@@ -56,6 +56,18 @@ CONNECTION_FILE="/workspace/setup/remotekernel.json"
 echo "Starting remote Python kernel and saving connection details to $CONNECTION_FILE"
 python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
 
+
+#  Start JupyterLab (Development Environment) ---
+# Kill any process whose command contains 'jupyter-notebook' or 'jupyter-lab'
+pkill -f "jupyter-notebook" || echo "No jupyter-notebook process found."
+pkill -f "jupyter-lab" || echo "No jupyter-lab process found."
+
+JUPYTER_INTERNAL_PORT="18080"
+echo "Starting JupyterLab (Port $JUPYTER_INTERNAL_PORT) ---"
+# FIX: Launch Jupyter on the port Caddy is EXPECTING to proxy from (18080)
+jupyter lab --ip=0.0.0.0 --port="$JUPYTER_INTERNAL_PORT" --no-browser --allow-root &
+
+
 # --- START: AUTO-ACTIVATE VENV IN BASHRC ---
 VENV_ACTIVATE_PATH="$VENV_PATH/bin/activate" 
 ACTIVATE_CMD="source $VENV_ACTIVATE_PATH"
