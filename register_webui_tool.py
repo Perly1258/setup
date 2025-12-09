@@ -7,11 +7,11 @@ import os
 # ==============================================================================
 
 # --- CONFIGURATION ---
-BASE_URL = "http://localhost:8000"
+BASE_URL = "http://localhost:7500"
 
 # NEW: Define the Ollama Port here for easy adjustment
 OLLAMA_PORT = 21434
-OLLAMA_API_URL = f"http://localhost:{OLLAMA_PORT}"
+OLLAMA_API_URL = "http://localhost:{OLLAMA_PORT}"
 
 # Credentials for the Admin Account to Create/Use
 LOGIN_EMAIL = "alexander_foster@yahoo.com"

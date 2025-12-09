@@ -35,13 +35,13 @@ RAG_PID=$!
 # EXPLICITLY passing DATA_DIR here guarantees the process receives it
 # ADDED: WEBUI_SECRET_KEY to prevent startup errors or session invalidation
 export WEBUI_SECRET_KEY="t0p-s3cr3t-k3y-fix"
-DATA_DIR="$DATA_DIR" open-webui serve --host 0.0.0.0 --port 8000 &
+DATA_DIR="$DATA_DIR" open-webui serve --host 0.0.0.0 --port 17500 &
 WEBUI_PID=$!
 
 # Wait for Frontend to be ready
 COUNT=0
 while [ $COUNT -lt 30 ]; do
-    if curl -s "http://localhost:8000/health" > /dev/null; then
+    if curl -s "http://localhost:7500/health" > /dev/null; then
         break
     fi
     sleep 2
@@ -54,6 +54,6 @@ if [ -f "$REGISTER_SCRIPT" ] && [ -f "$TOOL_SCRIPT" ]; then
 fi
 
 # Keep alive
-echo "RAG Platform Running on 8000 (UI) and 9000 (API)"
+echo "RAG Platform Running on 7500 (UI) and 9000 (API)"
 wait $RAG_PID
 kill $WEBUI_PID
