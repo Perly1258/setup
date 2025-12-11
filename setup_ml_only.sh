@@ -65,7 +65,7 @@ pkill -f "jupyter-lab" || echo "No jupyter-lab process found."
 JUPYTER_INTERNAL_PORT="18080"
 echo "Starting JupyterLab (Port $JUPYTER_INTERNAL_PORT) ---"
 # FIX: Launch Jupyter on the port Caddy is EXPECTING to proxy from (18080)
-jupyter lab --ip=0.0.0.0 --port="$JUPYTER_INTERNAL_PORT" --no-browser --allow-root &
+nohup jupyter lab --port 18080 --ip=0.0.0.0 --no-browser --ServerApp.token='' --ServerApp.password='' > jupyter.log 2>&1 &
 
 
 # --- START: AUTO-ACTIVATE VENV IN BASHRC ---
