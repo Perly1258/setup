@@ -59,13 +59,13 @@ python -m spyder_kernels.console --ip 0.0.0.0 -f "$CONNECTION_FILE" &
 
 #  Start JupyterLab (Development Environment) ---
 # Kill any process whose command contains 'jupyter-notebook' or 'jupyter-lab'
-pkill -f "jupyter-notebook" || echo "No jupyter-notebook process found."
-pkill -f "jupyter-lab" || echo "No jupyter-lab process found."
+#pkill -f "jupyter-notebook" || echo "No jupyter-notebook process found."
+#pkill -f "jupyter-lab" || echo "No jupyter-lab process found."
 
 JUPYTER_INTERNAL_PORT="18080"
 echo "Starting JupyterLab (Port $JUPYTER_INTERNAL_PORT) ---"
 # FIX: Launch Jupyter on the port Caddy is EXPECTING to proxy from (18080)
-nohup jupyter lab --port 18080 --ip=0.0.0.0 --no-browser --ServerApp.token='' --ServerApp.password='' > jupyter.log 2>&1 &
+#nohup jupyter lab --port 18080 --ip=0.0.0.0 --no-browser --ServerApp.token='' --ServerApp.password='' > jupyter.log 2>&1 &
 
 
 # --- START: AUTO-ACTIVATE VENV IN BASHRC ---
