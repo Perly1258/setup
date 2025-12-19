@@ -1,0 +1,425 @@
+Which strategy has the highest IRR?Which strategy has the highest IRR?import os
+import json
+import requests
+import psycopg2
+import datetime
+import csv
+import re
+from psycopg2.extras import RealDictCursor
+from math import pow
+
+# --- Configuration ---
+DB_PARAMS = {
+    "dbname": "private_markets_db", 
+    "user": "postgres",
+    "password": "postgres",
+    "host": "localhost",
+    "port": "5432"
+}
+
+MODEL_NAME = "mixtral" 
+OLLAMA_API_URL = "http://localhost:21434/api"
+
+# Create a session that BYPASSES system proxies
+session = requests.Session()
+session.trust_env = False 
+
+# --- Database Functions ---
+
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(**DB_PARAMS)
+        return conn
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+        return None
+
+def check_data_health():
+    """Runs a quick diagnostic to show the user what data is actually in the DB."""
+    conn = get_db_connection()
+    if not conn: return
+    
+    try:
+        cur = conn.cursor()
+        
+        # Count Funds
+        cur.execute("SELECT COUNT(*) FROM pe_portfolio")
+        fund_count = cur.fetchone()[0]
+        
+        # Count Cash Flows
+        cur.execute("SELECT COUNT(*) FROM pe_historical_cash_flows")
+        cf_count = cur.fetchone()[0]
+        
+        # List Strategies
+        cur.execute("SELECT DISTINCT primary_strategy FROM pe_portfolio ORDER BY 1")
+        strategies = [row[0] for row in cur.fetchall()]
+        
+        print(f"\n--- Data Diagnostics ---")
+        print(f"Funds: {fund_count}")
+        print(f"Cash Flow Events: {cf_count}")
+        print(f"Available Strategies: {strategies}")
+        print(f"------------------------\n")
+        
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"Diagnostics failed: {e}")
+
+def get_available_strategies():
+    conn = get_db_connection()
+    if not conn: return []
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT DISTINCT primary_strategy FROM pe_portfolio 
+            UNION 
+            SELECT DISTINCT sub_strategy FROM pe_portfolio 
+            WHERE sub_strategy IS NOT NULL
+        """)
+        return [row[0] for row in cur.fetchall()]
+    except:
+        return []
+
+def get_database_schema():
+    conn = get_db_connection()
+    if not conn: return ""
+    
+    schema_str = ""
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name != 'schema_annotations';
+        """)
+        tables = cur.fetchall()
+        
+        for table in tables:
+            table_name = table[0]
+            schema_str += f"Table: {table_name}\nColumns:\n"
+            query = f"""
+                SELECT c.column_name, c.data_type, COALESCE(sa.natural_language_description, '')
+                FROM information_schema.columns c
+                LEFT JOIN schema_annotations sa ON sa.table_name = c.table_name AND sa.column_name = c.column_name
+                WHERE c.table_name = '{table_name}'
+                ORDER BY c.ordinal_position;
+            """
+            cur.execute(query)
+            columns = cur.fetchall()
+            for col in columns:
+                line = f" - {col[0]} ({col[1]})"
+                if col[2]: line += f" -- NOTE: {col[2]}"
+                schema_str += line + "\n"
+            schema_str += "\n"
+            
+        cur.close()
+        conn.close()
+        return schema_str
+    except Exception as e:
+        print(f"Error fetching schema: {e}")
+        return ""
+
+def execute_sql_query(sql_query):
+    conn = get_db_connection()
+    if not conn: return "SQL Error: Could not connect to DB."
+    try:
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(sql_query)
+        if cur.description:
+            results = cur.fetchall()
+        else:
+            results = [{"status": "Success"}]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return results
+    except Exception as e:
+        return f"SQL Error: {e}"
+
+# --- Financial Math Functions (XIRR) ---
+
+def xirr(cash_flows, guess=0.1):
+    if not cash_flows: return None
+    cash_flows.sort(key=lambda x: x[0])
+    amounts = [cf[1] for cf in cash_flows]
+    if all(a >= 0 for a in amounts) or all(a <= 0 for a in amounts):
+        return None 
+        
+    start_date = cash_flows[0][0]
+    
+    def npv(rate):
+        total = 0.0
+        for date, amount in cash_flows:
+            days = (date - start_date).days
+            try:
+                if rate <= -1.0: return float('inf')
+                total += amount / pow(1 + rate, days / 365.0)
+            except OverflowError:
+                return float('inf')
+        return total
+
+    def npv_derivative(rate):
+        total = 0.0
+        for date, amount in cash_flows:
+            days = (date - start_date).days
+            try:
+                if rate <= -1.0: return float('inf')
+                term = pow(1 + rate, (days / 365.0) + 1)
+                if term == 0: return float('inf')
+                total += -days/365.0 * amount / term
+            except OverflowError:
+                return float('inf')
+        return total
+
+    for guess in [0.1, -0.1, 0.5, -0.5]:
+        rate = guess
+        for _ in range(50): 
+            try:
+                n_val = npv(rate)
+                if abs(n_val) < 1e-5: return rate
+                d_val = npv_derivative(rate)
+                if d_val == 0: break 
+                new_rate = rate - n_val / d_val
+                if abs(new_rate) > 1000: break
+                rate = new_rate
+            except (OverflowError, ValueError):
+                break
+    return None
+
+# --- Ollama Functions ---
+
+def check_ollama_status():
+    try:
+        response = session.get(f"{OLLAMA_API_URL}/tags")
+        if response.status_code == 200:
+            return True
+        return False
+    except:
+        return False
+
+def clean_sql_response(text):
+    text = text.replace("```sql", "").replace("```", "").strip()
+    text = text.replace(r"\_", "_")
+    if ";" in text:
+        text = text.split(";")[0] + ";"
+    lines = text.split('\n')
+    clean_lines = []
+    for line in lines:
+        if line.strip().lower().startswith("here is the sql") or line.strip().lower().startswith("note:"):
+            continue
+        clean_lines.append(line)
+    return "\n".join(clean_lines).strip()
+
+def generate_sql_from_text(user_question, schema_context):
+    
+    system_prompt = f"""You are a Private Equity Data Expert. 
+    Write a PostgreSQL query to answer the user's question.
+    
+    database_schema:
+    {schema_context}
+    
+    CRITICAL INSTRUCTIONS:
+    1. JOINS: 'primary_strategy' AND 'sub_strategy' are in 'pe_portfolio'. Cash flows are in 'pe_historical_cash_flows'. You MUST JOIN them on 'fund_id'.
+    2. STRATEGY BREAKDOWN: If the user asks for "highest IRR" or compares strategies, you MUST SELECT the strategy column (e.g. `p.primary_strategy`) in the SELECT list so the results can be grouped.
+    3. SIGN CORRECTION: Investment amounts in DB are negative. SUM them (don't subtract).
+    4. NO CHATTER: Return ONLY the SQL query.
+    
+    SPECIAL HANDLING FOR IRR / XIRR:
+    If the user asks for 'IRR', 'XIRR', or 'Rate of Return', use this structure:
+    
+    WITH LatestDates AS (
+        SELECT fund_id, MAX(transaction_date) as max_date
+        FROM pe_historical_cash_flows
+        GROUP BY fund_id
+    )
+    SELECT 
+       p.primary_strategy, -- REQUIRED: Strategy Name for grouping
+       t1.transaction_date, 
+       (COALESCE(t1.profit_distribution_usd,0) + COALESCE(t1.return_of_cost_distribution_usd,0) + COALESCE(t1.investment_paid_in_usd,0) + COALESCE(t1.management_fees_usd,0)) as net_amount
+    FROM pe_historical_cash_flows t1
+    JOIN pe_portfolio p ON t1.fund_id = p.fund_id
+    WHERE ... [Add filters if needed, otherwise SELECT ALL]
+    
+    UNION ALL
+    
+    SELECT 
+       p2.primary_strategy, -- REQUIRED: Strategy Name for grouping
+       ld.max_date as transaction_date, 
+       SUM(t2.net_asset_value_usd) as net_amount
+    FROM pe_historical_cash_flows t2
+    JOIN LatestDates ld ON t2.fund_id = ld.fund_id AND t2.transaction_date = ld.max_date
+    JOIN pe_portfolio p2 ON t2.fund_id = p2.fund_id
+    WHERE ... [Add same filters if needed]
+    GROUP BY p2.primary_strategy, ld.max_date
+    
+    ORDER BY 1, 2;
+    """
+
+    full_prompt = f"Question: {user_question}\n\nSQL Query:"
+
+    print(f"\nThinking with {MODEL_NAME}...")
+    
+    try:
+        response = session.post(f"{OLLAMA_API_URL}/generate", json={
+            "model": MODEL_NAME,
+            "prompt": system_prompt + "\n" + full_prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 1000} 
+        })
+        
+        if response.status_code == 200:
+            raw_text = response.json().get('response', '').strip()
+            return clean_sql_response(raw_text)
+        else:
+            print(f"Ollama Error: {response.text}")
+            return None
+    except Exception as e:
+        print(f"LLM Error: {e}")
+        return None
+
+def correct_sql_query(original_query, error_message, schema_context):
+    print(f"\n... Query failed. Attempting to auto-correct ...")
+    prompt = f"""The following PostgreSQL query failed. Fix it.
+    Schema: {schema_context}
+    Original Query: {original_query}
+    Error Message: {error_message}
+    HINTS:
+    - If error is 'syntax error', check your parens and clauses.
+    - Do NOT use function irr() or xirr().
+    - Use ILIKE for string comparisons.
+    - Ensure strategy column is in SELECT list for grouping.
+    - SIGN CORRECTION: Ensure Net Amount = Distributions + Paid_In (since Paid_In is already negative).
+    Instruction: Return ONLY the fixed SQL query. Do not explain.
+    """
+    try:
+        response = session.post(f"{OLLAMA_API_URL}/generate", json={
+            "model": MODEL_NAME, "prompt": prompt, "stream": False, "options": {"temperature": 0.1, "num_predict": 1000}
+        })
+        if response.status_code == 200:
+            raw_text = response.json().get('response', '').strip()
+            return clean_sql_response(raw_text)
+    except: return None
+    return None
+
+# --- Main Logic ---
+
+def main():
+    print("--- PE Master Agent (Agentic Mode) ---")
+    
+    if not check_ollama_status():
+        print("Error: Ollama is not running. Start it with 'ollama serve'")
+        return
+
+    # Diagnostic check
+    check_data_health()
+
+    print("Reading database schema...")
+    schema = get_database_schema()
+    if not schema: return
+    print("Schema loaded.")
+
+    print(f"\nAgent ready. Ask 'Which strategy has the highest IRR?'.")
+    
+    while True:
+        user_input = input("\nUser: ")
+        if user_input.lower() in ['exit', 'quit']:
+            break
+        
+        sql_query = generate_sql_from_text(user_input, schema)
+        
+        if sql_query:
+            # SECURITY CHECK
+            if any(bad in sql_query.lower() for bad in ['xirr(', 'irr(', 'generate_series']):
+                print("Detected unsafe SQL (XIRR/IRR). Retrying with strict rules...")
+                sql_query = correct_sql_query(sql_query, "You used XIRR/IRR function which does not exist. Rewrite to return raw 'transaction_date' and 'net_amount' ONLY.", schema)
+
+            print(f"\nGenerated SQL: {sql_query}")
+            print("Executing...")
+            results = execute_sql_query(sql_query)
+            
+            # Check for Errors and Auto-Correct
+            if isinstance(results, str) and results.startswith("SQL Error"):
+                print(f"Error encountered: {results}")
+                fixed_query = correct_sql_query(sql_query, results, schema)
+                if fixed_query:
+                    print(f"Fixed SQL: {fixed_query}")
+                    print("Executing fixed query...")
+                    results = execute_sql_query(fixed_query)
+
+            # IRR Result Stream Analysis
+            if isinstance(results, list) and len(results) > 0 and 'net_amount' in results[0]:
+                print("\n--- Detected Cash Flow Stream. Calculating XIRR... ---")
+                
+                # Dynamic Grouping
+                grouped_flows = {} 
+                group_col = None
+                
+                # Try to find a strategy column in the results
+                possible_cols = ['primary_strategy', 'sub_strategy', 'fund_name', 'vintage_year']
+                for key in results[0].keys():
+                    if key in possible_cols:
+                        group_col = key
+                        break
+                
+                for row in results:
+                    d = row['transaction_date']
+                    if isinstance(d, str): d = datetime.datetime.strptime(d, '%Y-%m-%d').date()
+                    amt = float(row['net_amount'] or 0)
+                    
+                    if group_col:
+                        group_key = row[group_col]
+                    else:
+                        group_key = 'Total Portfolio'
+                        
+                    if group_key not in grouped_flows: grouped_flows[group_key] = []
+                    grouped_flows[group_key].append((d, amt))
+                
+                print(f"\n--- Strategy Performance Analysis (Grouped by: {group_col or 'Total'}) ---")
+                best_strat = None
+                best_irr = -999.0
+                
+                # Print Header
+                print(f"{'Strategy':<30} | {'IRR':<8} | {'MOIC':<6} | {'Invested':<10}")
+                print("-" * 65)
+
+                for strat, flows in grouped_flows.items():
+                    irr_val = xirr(flows)
+                    
+                    # Calculate simple stats for sanity check
+                    total_in = sum(abs(amt) for d, amt in flows if amt < 0)
+                    total_val = sum(amt for d, amt in flows if amt > 0)
+                    moic = total_val / total_in if total_in > 0 else 0
+                    
+                    if irr_val is not None:
+                        display_irr = irr_val * 100
+                        print(f"{strat:<30} | {display_irr:6.2f}% | {moic:.2f}x | ${total_in/1000000:.1f}M")
+                        if display_irr > best_irr:
+                            best_irr = display_irr
+                            best_strat = strat
+                    else:
+                        print(f"{strat:<30} |    N/A   | {moic:.2f}x | ${total_in/1000000:.1f}M")
+
+                if best_strat:
+                    print(f"\n🏆 Winner: {best_strat} with {best_irr:.2f}% IRR")
+
+            # Standard Display
+            elif isinstance(results, list):
+                if len(results) == 0:
+                    print("No results found.")
+                    available = get_available_strategies()
+                    if available: print(f"Tip: This might be a typo. Available strategies are: {available[:5]}...")
+                else:
+                    print(f"\n--- Results ({len(results)} rows) ---")
+                    if len(results) > 0:
+                        headers = results[0].keys()
+                        print(" | ".join(headers))
+                        print("-" * 50)
+                        for row in results[:10]: # Limit display rows
+                            print(" | ".join([str(val) for val in row.values()]))
+                        if len(results) > 10: print("... (more rows hidden)")
+            else:
+                print(f"Final Error: {results}")
+
+if __name__ == "__main__":
+    main()
