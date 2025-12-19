@@ -14,12 +14,25 @@ apt-get install -y --no-install-recommends \
     
 echo "Cloning repository $REPO_URL into /workspace/setup"
 git clone "$REPO_URL"
-cd /workspace/setup/db
+PG_VERSION=$(psql --version | grep -oE '[0-9]+' | head -1)
+echo "✅ Detected PostgreSQL version: $PG_VERSION"
+apt-get install -y postgresql-${PG_VERSION}-pgvector
+
 sudo service postgresql start
+
+# --- NEW: CLEANUP EXISTING DATABASES ---
+# -f forces disconnection of active users
+sudo -u postgres dropdb --if-exists -f rag_db 
+sudo -u postgres dropdb --if-exists -f private_markets_db 
+
+# Recreate fresh
 sudo -u postgres createdb rag_db
+sudo -u postgres createdb private_markets_db
+
+# Enable Extension
 sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
-sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d postgres -f /workspace/setup/db/setup/private_market_setup.sql
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/private_market_setup.sql
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/rag_annotations.sql
 
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
