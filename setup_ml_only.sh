@@ -8,6 +8,7 @@ ONSTART_SCRIPT_URL="https://raw.githubusercontent.com/Perly1258/setup/refs/heads
 
 echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
+
 apt-get update
 apt-get install -y --no-install-recommends \
     python3-venv git poppler-utils curl postgresql postgresql-contrib postgresql-16-pgvector
