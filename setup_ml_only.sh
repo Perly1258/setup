@@ -14,6 +14,9 @@ apt-get install -y --no-install-recommends \
     
 echo "Cloning repository $REPO_URL into /workspace/setup"
 git clone "$REPO_URL"
+git config --global user.email "alexander_foster@yahoo.com"
+git config --global user.name "Perly1258"
+
 PG_VERSION=$(psql --version | grep -oE '[0-9]+' | head -1)
 echo "✅ Detected PostgreSQL version: $PG_VERSION"
 apt-get install -y postgresql-${PG_VERSION}-pgvector
@@ -50,7 +53,7 @@ echo "Installing core Python packages..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
-pip install spyder-kernels
+pip install spyder-kernels numpy matplotlib
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
             llama-index-readers-file pymupdf tabulate llama-index open-webui
