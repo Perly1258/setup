@@ -10,17 +10,24 @@ echo "--- 1. Installing System Dependencies & Cloning Repository ---"
 cd /workspace
 
 apt-get update
-apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils curl postgresql postgresql-contrib postgresql-16-pgvector
-    
+
 echo "Cloning repository $REPO_URL into /workspace/setup"
+# To force an overwrite, the directory must be removed first as 'git clone --force' does not overwrite existing directories.
+if [ -d "/workspace/setup" ]; then
+    echo "Removing existing /workspace/setup directory for a fresh clone."
+    rm -rf "/workspace/setup"
+fi
 git clone "$REPO_URL"
 git config --global user.email "alexander_foster@yahoo.com"
 git config --global user.name "Perly1258"
 
-PG_VERSION=$(psql --version | grep -oE '[0-9]+' | head -1)
-echo "✅ Detected PostgreSQL version: $PG_VERSION"
-apt-get install -y postgresql-${PG_VERSION}-pgvector
+
+# Remove any previous PostgreSQL versions
+apt-get remove --purge -y postgresql* || true
+
+apt-get install -y --no-install-recommends \
+    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector
+
 
 sudo service postgresql start
 
