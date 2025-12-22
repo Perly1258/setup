@@ -2,12 +2,15 @@ import pandas as pd
 import numpy_financial as npf
 import matplotlib.pyplot as plt
 import re
+import os
 import sys
+import logging
 from sqlalchemy import create_engine, text
 
 # --- COMPATIBILITY IMPORTS (Safe for OpenWebUI) ---
 from langchain_community.llms import Ollama 
 from langchain_community.utilities import SQLDatabase
+import traceback # Added for detailed error logging
 
 # FIX: Robust imports for Tool and Agents
 # Try standard locations first, then fallbacks
@@ -32,6 +35,11 @@ try:
 except ImportError:
     IN_JUPYTER = False
 
+# --- 0. LOGGING CONFIGURATION ---
+LOG_LEVEL = os.environ.get("PE_AGENT_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(stream=sys.stdout, level=LOG_LEVEL, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 # --- 1. CONFIGURATION ---
 DB_USER = "postgres"
 DB_PASS = "postgres" 
@@ -48,9 +56,9 @@ try:
     connection_str = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     engine = create_engine(connection_str)
     db = SQLDatabase(engine)
-    print(f"✅ Database Connected (User: {DB_USER})")
+    logger.info(f"✅ Database Connected (User: {DB_USER})")
 except Exception as e:
-    print(f"❌ Database Error: {e}")
+    logger.error(f"❌ Database Error: {e}", exc_info=True) # Log full traceback
     sys.exit(1)
 
 # --- 2. INITIALIZE LEGACY LLM ---
@@ -85,8 +93,12 @@ def clean_llm_output(text: str) -> str:
 # --- 4. TOOLS ---
 
 def robust_sql_query(query_input: str):
+def get_portfolio_metrics(strategy_filter: str = ""):
     """
     Generates and executes SQL safely with strict logic for duplicates.
+    Calculates TVPI and DPI for a given strategy or the entire portfolio.
+    Use for questions about TVPI or DPI.
+    Input: A strategy name (e.g., 'Growth Equity') or empty for the whole portfolio.
     """
     prompt = f"""
     You are a PostgreSQL expert. Given the user question, write a valid SQL query.
@@ -117,10 +129,19 @@ def robust_sql_query(query_input: str):
              FROM pe_historical_cash_flows
          )
          SELECT SUM(net_asset_value_usd) FROM ordered_navs WHERE rn = 1
+    6. **UN CALLED CAPITAL (REMAINING COMMITMENT):**
+       - This is `total_commitment_usd` from the portfolio table minus the total capital called.
+       - Formula: `p.total_commitment_usd - ABS(SUM(cf.investment_paid_in_usd))`
+    7. **RANKING & SELECTION:**
+       - For questions like "Which fund..." or "What is the top...", you must return the `fund_name`.
+       - Use `ORDER BY` with `DESC` for "highest" or "most", and `ASC` for "lowest" or "least".
+       - Always include `LIMIT 1` unless the user asks for more than one result.
+       - Example: To find the fund with the most distributions, `SELECT p.fund_name FROM pe_portfolio p JOIN ... GROUP BY p.fund_name ORDER BY SUM(cf.profit_distribution_usd + cf.return_of_cost_distribution_usd) DESC LIMIT 1`.
 
-    ### OUTPUT FORMAT:
-    - Return ONLY the SQL code. No markdown, no explanations, no <think> tags.
-    - If the user asks for a portfolio-wide metric (like "Total TVPI" or "Total Fees"), return a SINGLE row with a SINGLE column. Do NOT group by fund unless asked.
+    ### OUTPUT FORMAT (VERY STRICT):
+    - **Return ONLY the raw SQL code and nothing else.**
+    - NO explanations, NO markdown (like ```sql), NO conversational text, NO <think> tags.
+    - Your entire response must be only the SQL query.
     
     Question: {query_input}
     """
@@ -128,12 +149,26 @@ def robust_sql_query(query_input: str):
     raw_response = llm.invoke(prompt)
     clean_sql = clean_llm_output(raw_response)
     
-    print(f"\n[DEBUG] SQL Query:\n{clean_sql}\n")
+    logger.debug(f"SQL Query:\n{clean_sql}")
     
     try:
         return db.run(clean_sql)
+        # Use '%' as a wildcard for the function if the filter is not empty
+        filter_param = f"%{strategy_filter}%" if strategy_filter else None
+        
+        with engine.connect() as conn:
+            # Use sqlalchemy.text to safely pass parameters to the database function
+            result = conn.execute(text("SELECT tvpi, dpi FROM calculate_portfolio_metrics(:filter)"), {"filter": filter_param}).fetchone()
+        
+        if result and result.tvpi is not None:
+            return f"Metrics for '{strategy_filter or 'Entire Portfolio'}': TVPI = {result.tvpi:.2f}x, DPI = {result.dpi:.2f}x"
+        else:
+            return f"Could not calculate metrics for '{strategy_filter or 'Entire Portfolio'}'. No data found."
     except Exception as e:
-        return f"SQL Execution Failed: {e}"
+        logger.error(f"SQL Execution Failed: {e}", exc_info=True) # Log full traceback
+        return f"SQL Execution Failed: {e}" # Still return the error message for the agent to process
+        logger.error(f"Error calling calculate_portfolio_metrics: {e}", exc_info=True)
+        return "Failed to retrieve portfolio metrics from the database."
 
 def calculate_irr_jcurve(filter_context: str = ""):
     """
@@ -155,7 +190,7 @@ def calculate_irr_jcurve(filter_context: str = ""):
     # Use ILIKE with wildcards for broad matching.
     where_clause = f"WHERE p.primary_strategy ILIKE '%%{search_term}%%' OR p.sub_strategy ILIKE '%%{search_term}%%'"
     
-    print(f"[DEBUG] Filter: {where_clause}")
+    logger.debug(f"Filter: {where_clause}")
 
     sql = f"""
     SELECT 
@@ -210,11 +245,16 @@ def calculate_irr_jcurve(filter_context: str = ""):
                 print(f"Graph displayed above. Saved to: {filename}")
             except Exception:
                 pass
+                logger.info(f"Graph displayed above. Saved to: {filename}")
+            except Exception as e:
+                logger.warning(f"Could not display image in Jupyter: {e}")
 
         return f"IRR: {irr:.2%} (Periodic). J-Curve saved to {filename}."
         
     except Exception as e:
         return f"Calculation Error: {e}"
+        logger.error(f"IRR/J-Curve Calculation Error: {e}")
+        return f"Calculation Error: {e}" # Still return the error message for the agent to process
 
 def calculate_annual_cash_flows(filter_context: str = ""):
     """
@@ -253,29 +293,8 @@ def calculate_annual_cash_flows(filter_context: str = ""):
         return f"Annual Cash Flows for {search_term}:\n" + df.to_string(index=False)
         
     except Exception as e:
-        return f"Error: {e}"
-
-def analyze_agent_output(input_text: str):
-    """
-    Analyzes the output from previous tools to provide summary or insights.
-    Input: The raw output text from another tool (e.g. SQL results, IRR calculation).
-    """
-    prompt = f"""
-    You are a Financial Analyst. Analyze the following data/result and provide a concise summary.
-    
-    DATA/RESULT:
-    {input_text}
-    
-    YOUR ANALYSIS:
-    - What is the key takeaway?
-    - Are the numbers positive/negative?
-    - Any trends?
-    """
-    
-    # Direct invocation via legacy Ollama
-    analysis = llm.invoke(prompt)
-    clean_analysis = clean_llm_output(analysis)
-    return clean_analysis
+        logger.error(f"Error calculating annual cash flows: {e}", exc_info=True) # Log full traceback
+        return f"Error: {e}" # Still return the error message for the agent to process
 
 # --- 5. AGENT SETUP ---
 
@@ -283,8 +302,11 @@ def setup_agent():
     tools = [
         Tool(
             name="SQL_Query_Tool",
-            func=robust_sql_query,
-            description="Use for TVPI, MOIC, DPI, Distributions, Ranking. Input: Full user question."
+            func=robust_sql_query, # Updated description
+            description="Use for TVPI, MOIC, DPI, Distributions, Ranking, Uncalled Capital. Input: Full user question." 
+            name="Portfolio_Metrics_Tool",
+            func=get_portfolio_metrics,
+            description="Use for any questions about TVPI or DPI for the whole portfolio or a specific strategy. Input: a strategy name like 'Growth Equity' or empty for the entire portfolio."
         ),
         Tool(
             name="IRR_JCurve_Tool",
@@ -303,14 +325,14 @@ def setup_agent():
     return AgentExecutor(agent=agent, tools=tools, verbose=True, handle_parsing_errors=True)
 
 # --- 6. BATCH EXECUTION ---
-if __name__ == "__main__":
+if __name__ == "__main__": 
     agent = setup_agent()
-    print("\n" + "="*50)
-    print("🤖 Private Equity Agent Ready")
-    print("   - Connected to DeepSeek-R1 (Port 21434)")
-    print("   - Connected to Postgres (Port 5432)")
-    print("   - Executing Batch Test Plan...")
-    print("="*50 + "\n")
+    logger.info("\n" + "="*50)
+    logger.info("🤖 Private Equity Agent Ready")
+    logger.info("   - Connected to DeepSeek-R1 (Port 21434)")
+    logger.info("   - Connected to Postgres (Port 5432)")
+    logger.info("   - Executing Batch Test Plan...")
+    logger.info("="*50 + "\n")
     
     test_questions = [
         "What is the TVPI and DPI of the entire portfolio?",
@@ -326,15 +348,10 @@ if __name__ == "__main__":
     ]
     
     for i, q in enumerate(test_questions, 1):
-        print(f"\n🔹 Question {i}: {q}")
+        logger.info(f"\n🔹 Question {i}: {q}")
         try:
             result = agent.invoke({"input": q})
-            print(f"Agent Answer: {result['output']}")
-            
-            # Auto-Analyze the answer
-            print("--- Analyst Insight ---")
-            analysis = analyze_agent_output(result['output'])
-            print(f"{analysis}\n")
+            logger.info(f"Agent Answer: {result['output']}")
             
         except Exception as e:
-            print(f"❌ Error: {e}\n")
+            logger.error(f"❌ Query failed for question '{q}': {e}\n", exc_info=True) # Log full traceback

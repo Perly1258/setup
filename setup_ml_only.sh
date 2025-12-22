@@ -26,7 +26,7 @@ git config --global user.name "Perly1258"
 apt-get remove --purge -y postgresql* || true
 
 apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector
+    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector postgresql-plpython3-16
 
 
 sudo service postgresql start
@@ -45,6 +45,7 @@ sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/private_market_setup.sql
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/rag_annotations.sql
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/pe_logic_python.sql
 
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
 mkdir -p "$VENV_PATH"
@@ -61,7 +62,7 @@ echo "Installing core Python packages..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
 pip install langchain langchain-ollama pypdf pydantic huggingface-hub
-pip install spyder-kernels numpy matplotlib
+pip install spyder-kernels numpy matplotlib numpy_financial
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
             llama-index-readers-file pymupdf tabulate llama-index open-webui
