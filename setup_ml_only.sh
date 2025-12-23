@@ -11,6 +11,13 @@ cd /workspace
 
 apt-get update
 
+# Install prerequisites and setup PostgreSQL repository
+apt-get install -y curl ca-certificates gnupg lsb-release
+install -d /usr/share/postgresql-common/pgdg
+curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+apt-get update
+
 echo "Cloning repository $REPO_URL into /workspace/setup"
 # To force an overwrite, the directory must be removed first as 'git clone --force' does not overwrite existing directories.
 if [ -d "/workspace/setup" ]; then
