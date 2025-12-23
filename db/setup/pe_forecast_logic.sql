@@ -163,7 +163,3 @@ RETURNS json AS $$
         "rows_generated": len(results)
     })
 $$ LANGUAGE plpython3u;
-
--- 5. VERIFICATION
--- Confirm that modeling rules have been loaded
-SELECT * FROM pe_modeling_rules;

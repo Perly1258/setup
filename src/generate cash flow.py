@@ -174,10 +174,11 @@ def simulate_cash_flows(fund_row, quarters_to_simulate):
 # --- 4. Execution ---
 
 # Define the absolute path for the output file based on your DB setup script
-OUTPUT_FILE_PATH = "../data/Fund_Cash_Flows.csv"
+OUTPUT_FILE_PATH_HISTORICAL = "/workspace/setup/data/Fund_Cash_Flows.csv"
+OUTPUT_FILE_PATH_PROJECTED = "/workspace/setup/data/Fund_Cash_Flows_Projected.csv"
 
 # Calculate how many rows need to be generated in total
-TOTAL_ROWS_TARGET = 2700
+TOTAL_ROWS_TARGET = 3700
 # 2700 total rows / 50 funds = 54 quarters per fund (plus a small buffer for safety)
 ROWS_PER_FUND = int(np.ceil(TOTAL_ROWS_TARGET / len(df)))
 
@@ -207,16 +208,25 @@ final_cf_df = cf_df[[
     'MOIC'
 ]]
 
+# Split into Historical (<= Today) and Projected (> Today)
+today = pd.Timestamp(datetime.date.today())
+historical_df = final_cf_df[final_cf_df['Transaction_Date'] <= today]
+projected_df = final_cf_df[final_cf_df['Transaction_Date'] > today]
+
 # CRITICAL FIX: Write to the absolute file path
 try:
-    final_cf_df.to_csv(OUTPUT_FILE_PATH, index=False)
-    logger.info(f"Successfully generated and saved {len(final_cf_df)} rows of data to: {OUTPUT_FILE_PATH}")
+    historical_df.to_csv(OUTPUT_FILE_PATH_HISTORICAL, index=False)
+    logger.info(f"Successfully generated and saved {len(historical_df)} rows of historical data to: {OUTPUT_FILE_PATH_HISTORICAL}")
+    
+    projected_df.to_csv(OUTPUT_FILE_PATH_PROJECTED, index=False)
+    logger.info(f"Successfully generated and saved {len(projected_df)} rows of projected data to: {OUTPUT_FILE_PATH_PROJECTED}")
 except Exception as e:
-    logger.error(f"FATAL ERROR: Failed to write CSV file to disk at {OUTPUT_FILE_PATH}. Check directory permissions or path existence.")
+    logger.error(f"FATAL ERROR: Failed to write CSV file to disk. Check directory permissions or path existence.")
     logger.error(f"Error details: {e}")
     sys.exit(1)
 
 # Print confirmation to console (optional, but confirms execution flow)
 print(f"--- File Generation Complete ---")
-print(f"File content saved to: {OUTPUT_FILE_PATH}")
+print(f"Historical content saved to: {OUTPUT_FILE_PATH_HISTORICAL}")
+print(f"Projected content saved to: {OUTPUT_FILE_PATH_PROJECTED}")
 print(f"Total rows generated (including header): {len(final_cf_df) + 1}")

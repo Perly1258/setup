@@ -6,10 +6,54 @@
 -- 1. ENABLE PYTHON EXTENSION
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 
--- 2. VIEW: YEARLY CASH FLOWS (Discrete)
+-- 2. VIEW: MASTER HIERARCHY CUBE (The "Rollup")
+-- Calculates Scalar Metrics (TVPI, DPI, NAV) for ALL levels:
+-- Portfolio -> Strategy -> Sub-Strategy -> Fund
+DROP VIEW IF EXISTS view_pe_hierarchy_metrics CASCADE;
+CREATE OR REPLACE VIEW view_pe_hierarchy_metrics AS
+WITH 
+latest_nav AS (
+    SELECT DISTINCT ON (fund_id) fund_id, net_asset_value_usd
+    FROM pe_historical_cash_flows ORDER BY fund_id, transaction_date DESC
+),
+fund_aggregates AS (
+    SELECT 
+        cf.fund_id,
+        SUM(ABS(cf.investment_paid_in_usd) + ABS(cf.management_fees_usd)) as total_paid_in,
+        SUM(cf.profit_distribution_usd + cf.return_of_cost_distribution_usd) as total_distributed
+    FROM pe_historical_cash_flows cf
+    GROUP BY cf.fund_id
+)
+SELECT 
+    CASE 
+        WHEN p.primary_strategy IS NULL THEN 'Portfolio'
+        WHEN p.sub_strategy IS NULL THEN 'Strategy'
+        WHEN p.fund_name IS NULL THEN 'Sub-Strategy'
+        ELSE 'Fund' 
+    END as hierarchy_level,
+    COALESCE(p.primary_strategy, 'Total Portfolio') as primary_strategy,
+    COALESCE(p.sub_strategy, '-') as sub_strategy,
+    COALESCE(p.fund_name, '-') as fund_name,
+    SUM(p.total_commitment_usd) as total_commitment,
+    SUM(fa.total_paid_in) as total_paid_in,
+    SUM(fa.total_distributed) as total_distributed,
+    SUM(ln.net_asset_value_usd) as total_nav,
+    (SUM(fa.total_distributed) + SUM(ln.net_asset_value_usd)) as total_value,
+    CASE WHEN SUM(fa.total_paid_in) > 0 THEN ROUND(SUM(fa.total_distributed) / SUM(fa.total_paid_in), 2) ELSE 0 END as dpi,
+    CASE WHEN SUM(fa.total_paid_in) > 0 THEN ROUND((SUM(fa.total_distributed) + SUM(ln.net_asset_value_usd)) / SUM(fa.total_paid_in), 2) ELSE 0 END as tvpi,
+    SUM(p.total_commitment_usd) - SUM(fa.total_paid_in) as remaining_commitment
+FROM pe_portfolio p
+LEFT JOIN fund_aggregates fa ON p.fund_id = fa.fund_id
+LEFT JOIN latest_nav ln ON p.fund_id = ln.fund_id
+GROUP BY ROLLUP (p.primary_strategy, p.sub_strategy, p.fund_name)
+ORDER BY p.primary_strategy NULLS FIRST, p.sub_strategy NULLS FIRST, p.fund_name NULLS FIRST;
+
+-- 3. VIEW: YEARLY CASH FLOWS (Discrete)
+-- Updated with ROLLUP(primary_strategy) to include 'Total Portfolio' J-Curve
+DROP VIEW IF EXISTS view_yearly_cash_flows CASCADE;
 CREATE OR REPLACE VIEW view_yearly_cash_flows AS
 SELECT 
-    p.primary_strategy,
+    COALESCE(p.primary_strategy, 'Total Portfolio') as primary_strategy,
     EXTRACT(YEAR FROM cf.transaction_date) as cf_year,
     SUM(cf.profit_distribution_usd + cf.return_of_cost_distribution_usd) as yearly_dist,
     SUM(cf.investment_paid_in_usd + cf.management_fees_usd) as yearly_contributions,
@@ -17,16 +61,17 @@ SELECT
         (cf.investment_paid_in_usd + cf.management_fees_usd)) as net_cash_flow
 FROM pe_historical_cash_flows cf
 JOIN pe_portfolio p ON cf.fund_id = p.fund_id
-GROUP BY p.primary_strategy, cf_year
-ORDER BY p.primary_strategy, cf_year;
+-- This allows J-Curves for individual strategies AND the total portfolio (NULL strategy)
+GROUP BY ROLLUP(p.primary_strategy), cf_year
+ORDER BY p.primary_strategy NULLS FIRST, cf_year;
 
--- 3. VIEW: CUMULATIVE J-CURVE (Running Totals / Since Inception)
+-- 4. VIEW: CUMULATIVE J-CURVE (Running Totals)
+DROP VIEW IF EXISTS view_j_curve_cumulative CASCADE;
 CREATE OR REPLACE VIEW view_j_curve_cumulative AS
 SELECT 
     primary_strategy,
     cf_year,
     net_cash_flow as discrete_cash_flow,
-    -- Window Function: Calculates 'Since Inception' up to that specific year
     SUM(net_cash_flow) OVER (
         PARTITION BY primary_strategy 
         ORDER BY cf_year ASC
@@ -34,8 +79,8 @@ SELECT
     ) as cumulative_net_cash_flow
 FROM view_yearly_cash_flows;
 
--- 4. FUNCTION: MAIN METRICS ENGINE (PL/PYTHON)
--- Now includes YTD (Year-to-Date) logic
+-- 5. FUNCTION: MAIN METRICS ENGINE (PL/PYTHON)
+-- Calculates complex metrics (IRR, YTD) on demand
 CREATE OR REPLACE FUNCTION fn_get_pe_metrics_py(
     filter_level text, -- 'PORTFOLIO', 'STRATEGY', 'SUB_STRATEGY', 'FUND'
     filter_name text   -- e.g., 'Venture Capital' or NULL for Portfolio
@@ -114,16 +159,11 @@ RETURNS json AS $$
     total_nav = nav_result[0]['total_nav'] or 0.0
 
     # --- D. CALCULATE METRICS (INCEPTION & YTD) ---
-    # 1. Determine "Current Year" (Max year in dataset to simulate 'today')
-    # In a live system, you might use datetime.datetime.now().year
     last_tx_date = datetime.datetime.strptime(str(cf_rows[-1]['transaction_date']), '%Y-%m-%d')
     current_year = last_tx_date.year
 
-    # Inception Totals
     total_paid_in = 0.0
     total_distributed = 0.0
-    
-    # YTD Totals
     ytd_paid_in = 0.0
     ytd_distributed = 0.0
 
@@ -135,17 +175,16 @@ RETURNS json AS $$
         dist = float(row['profit_distribution_usd'] or 0) + float(row['return_of_cost_distribution_usd'] or 0)
         net = row['net_flow']
         
-        # Parse Date
         dt = datetime.datetime.strptime(str(row['transaction_date']), '%Y-%m-%d')
         
-        # --- 1. SINCE INCEPTION LOGIC ---
+        # Inception Totals
         total_paid_in += paid_in
         total_distributed += dist
         if net is not None:
             irr_amounts.append(float(net))
             irr_dates.append(dt)
             
-        # --- 2. YTD LOGIC ---
+        # YTD Logic
         if dt.year == current_year:
             ytd_paid_in += paid_in
             ytd_distributed += dist

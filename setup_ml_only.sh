@@ -69,15 +69,22 @@ if [ ! -f "$VENV_PATH/bin/activate" ]; then
 fi
 
 source "$VENV_PATH/bin/activate"
+pip install --upgrade pip
 
 echo "Installing core Python packages..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
-pip install langchain langchain-ollama pypdf pydantic huggingface-hub
+pip install pypdf pydantic huggingface-hub
 pip install spyder-kernels numpy matplotlib numpy_financial
+
+# Install Open WebUI first to handle its strict pinning
+pip install open-webui
+
+# Install LlamaIndex and LangChain extensions separately to avoid resolution deadlocks
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf tabulate llama-index open-webui
+            llama-index-readers-file pymupdf tabulate llama-index \
+            langchain-ollama langchainhub
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:21434}"
