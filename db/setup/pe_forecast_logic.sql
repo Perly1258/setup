@@ -9,13 +9,13 @@
 DROP TABLE IF EXISTS pe_modeling_rules CASCADE;
 CREATE TABLE pe_modeling_rules (
     primary_strategy VARCHAR(50) PRIMARY KEY,
-    expected_moic_gross_multiple NUMERIC(4, 2),
-    target_irr_net_percentage NUMERIC(4, 2), -- e.g. 0.15 for 15%
-    investment_period_years INTEGER,
-    fund_life_years INTEGER,
-    nav_initial_qtr_depreciation NUMERIC(5, 4), -- Initial J-Curve hit
-    nav_initial_depreciation_qtrs INTEGER,
-    j_curve_model_description VARCHAR(50),
+    expected_moic_gross_multiple NUMERIC(4, 2) NOT NULL,
+    target_irr_net_percentage NUMERIC(4, 2) NOT NULL, -- e.g. 0.15 for 15%
+    investment_period_years INTEGER NOT NULL,
+    fund_life_years INTEGER NOT NULL,
+    nav_initial_qtr_depreciation NUMERIC(5, 4) NOT NULL, -- Initial J-Curve hit
+    nav_initial_depreciation_qtrs INTEGER NOT NULL,
+    j_curve_model_description VARCHAR(50) NOT NULL,
     modeling_rationale TEXT
 );
 
