@@ -73,9 +73,6 @@ sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f
 # have been replaced by equivalent pure Python functions in the engines/ directory.
 
 
-
-
-
 echo "--- 2. Setting up Python Virtual Environment and RAG Tools ---"
 mkdir -p "$VENV_PATH"
 mkdir -p "$MODEL_BASE_DIR"
