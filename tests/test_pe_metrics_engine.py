@@ -164,8 +164,8 @@ class TestComprehensiveMetrics(unittest.TestCase):
         self.assertEqual(metrics['total_value'], 130000)
         self.assertEqual(metrics['unfunded_commitment'], 30000)
         
-        # TVPI should be (70000 + 60000) / 120000 = 1.083
-        self.assertAlmostEqual(metrics['tvpi'], 1.083, places=2)
+        # TVPI should be (70000 + 60000) / 120000 = 1.0833...
+        self.assertAlmostEqual(metrics['tvpi'], 1.0833, places=2)
         
         # DPI should be 70000 / 120000 = 0.583
         self.assertAlmostEqual(metrics['dpi'], 0.583, places=2)

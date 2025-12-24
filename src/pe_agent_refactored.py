@@ -239,7 +239,9 @@ def get_fund_metrics(fund_name: str) -> str:
             "called_percent": metrics.get('called_percent')
         }
         
-        logger.info(f"Fund metrics for {fund_name}: TVPI={response['tvpi']:.2f}x, IRR={response.get('irr', 0):.2%}")
+        irr_value = response.get('irr')
+        irr_str = f"{irr_value:.2%}" if irr_value is not None else "N/A"
+        logger.info(f"Fund metrics for {fund_name}: TVPI={response['tvpi']:.2f}x, IRR={irr_str}")
         return json.dumps(response)
         
     except Exception as e:

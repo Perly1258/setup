@@ -265,6 +265,15 @@ def calculate_all_metrics(
     distributions = sum([cf for cf in cash_flows if cf > 0])
     total_value = distributions + current_nav
     
+    # Calculate IRR by treating current NAV as a final (unrealized) distribution
+    # This gives the IRR including unrealized gains
+    irr_cash_flows = cash_flows.copy()
+    irr_dates = dates.copy()
+    if current_nav > 0 and dates:
+        # Add NAV as a hypothetical exit at the last date
+        irr_cash_flows.append(current_nav)
+        irr_dates.append(dates[-1] if dates else datetime.now())
+    
     # Calculate all metrics
     metrics = {
         "paid_in": paid_in,
@@ -273,7 +282,7 @@ def calculate_all_metrics(
         "total_value": total_value,
         "total_commitment": total_commitment,
         "unfunded_commitment": total_commitment - paid_in,
-        "irr": calculate_xirr(cash_flows + [current_nav], dates + [dates[-1]]) if cash_flows else None,
+        "irr": calculate_xirr(irr_cash_flows, irr_dates) if len(irr_cash_flows) >= 2 else None,
         "tvpi": calculate_tvpi(total_value, paid_in),
         "dpi": calculate_dpi(distributions, paid_in),
         "rvpi": calculate_rvpi(current_nav, paid_in),

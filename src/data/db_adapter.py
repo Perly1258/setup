@@ -212,24 +212,32 @@ def get_cash_flows(
     for row in results:
         # Create separate CashFlow objects for each transaction component
         
-        # Investment (negative)
+        # Investment (ensure negative for calls)
         if row['investment_paid_in_usd']:
+            amount = row['investment_paid_in_usd']
+            # Ensure it's negative (calls should be negative)
+            if amount > 0:
+                amount = -amount
             cash_flows.append(CashFlow(
                 transaction_id=row['transaction_id'],
                 fund_id=row['fund_id'],
                 date=row['transaction_date'],
                 cf_type='call_investment',
-                amount=row['investment_paid_in_usd']  # Already negative in DB
+                amount=amount
             ))
         
-        # Fees (negative)
+        # Fees (ensure negative for calls)
         if row['management_fees_usd']:
+            amount = row['management_fees_usd']
+            # Ensure it's negative (fees should be negative)
+            if amount > 0:
+                amount = -amount
             cash_flows.append(CashFlow(
                 transaction_id=row['transaction_id'],
                 fund_id=row['fund_id'],
                 date=row['transaction_date'],
                 cf_type='call_fees',
-                amount=row['management_fees_usd']  # Already negative in DB
+                amount=amount
             ))
         
         # Return of capital distribution (positive)

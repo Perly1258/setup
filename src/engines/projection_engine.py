@@ -225,12 +225,16 @@ def project_cash_flows_takahashi(
         # --- CAPITAL CALLS ---
         call_investment = remaining_commitment * call_shape[period]
         
-        # Management fees (2% of commitment for first 5 years, then 1%)
+        # Management fees (typically 2% of committed capital annually for first 5 years, then 1%)
+        # Note: In practice, fees may be based on committed capital during investment period,
+        # then switch to invested capital or NAV during harvest period
         years_since_vintage = (current_year + period // 4) - (vintage_year or current_year)
         if years_since_vintage <= 5:
-            management_fees = (unfunded_commitment + current_nav) * quarterly_fee_rate
+            # Investment period: fee on total commitment
+            management_fees = total_investment * quarterly_fee_rate
         else:
-            management_fees = (unfunded_commitment + current_nav) * (quarterly_fee_rate / 2)
+            # Harvest period: reduced fee rate
+            management_fees = total_investment * (quarterly_fee_rate / 2)
         
         period_data["call_investment"] = -call_investment
         period_data["management_fees"] = -management_fees
