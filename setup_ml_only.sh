@@ -32,8 +32,13 @@ git config --global user.name "Perly1258"
 # Remove any previous PostgreSQL versions
 apt-get remove --purge -y postgresql* || true
 
+# Install PostgreSQL 16 with pgvector extension
+# Note: postgresql-plpython3-16 is NO LONGER installed because the new architecture
+# uses pure Python computation engines (src/engines/*.py) instead of database-resident
+# PL/Python functions. Financial calculations (IRR, TVPI, projections) are now handled
+# by pe_metrics_engine.py, cash_flow_engine.py, and projection_engine.py.
 apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector postgresql-plpython3-16
+    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector
 
 
 sudo service postgresql start
@@ -50,10 +55,22 @@ sudo -u postgres createdb private_markets_db
 # Enable Extension
 sudo -u postgres psql -d rag_db -c "CREATE EXTENSION IF NOT EXISTS vector;"
 sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
+
+# Setup database schema (data-only layer, no computation logic)
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/private_market_setup.sql
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/rag_annotations.sql
-sudo -u postgres PGPASSWORD='postgres' psql -U postgres  -d private_markets_db -f /workspace/setup/db/setup/pe_logic_python.sql
-sudo -u postgres PGPASSWORD='postgres' psql -U postgres  -d private_markets_db -f /workspace/setup/db/setup/pe_forecast_logic.sql
+
+# MIGRATION NOTE: The following files are NO LONGER executed:
+# - pe_logic_python.sql (replaced by src/engines/pe_metrics_engine.py)
+# - pe_forecast_logic.sql (replaced by src/engines/projection_engine.py)
+#
+# The new architecture uses a "computation-first hybrid" approach where:
+# - Database = Data-only layer (no PL/Python functions)
+# - Computation = Pure Python engines (testable, debuggable, maintainable)
+# - LLM Agent = Query understanding and response formatting only
+#
+# Old PL/Python functions like fn_get_pe_metrics_py() and fn_run_takahashi_forecast()
+# have been replaced by equivalent pure Python functions in the engines/ directory.
 
 
 
@@ -140,3 +157,38 @@ source "$VENV_PATH/bin/activate"
 echo "Downloading companion onstart script from $ONSTART_SCRIPT_URL"
 wget -O /workspace/onstart.sh "$ONSTART_SCRIPT_URL"
 chmod +x /workspace/setup/*.sh
+
+# ==============================================================================
+# SETUP COMPLETE - New Architecture Ready
+# ==============================================================================
+echo ""
+echo "════════════════════════════════════════════════════════════════════════"
+echo "✅ Setup Complete! The PE Portfolio Analysis System is ready."
+echo "════════════════════════════════════════════════════════════════════════"
+echo ""
+echo "📊 ARCHITECTURE:"
+echo "   • Database: Data-only layer (no PL/Python computation)"
+echo "   • Engines: Pure Python computation (src/engines/)"
+echo "   • Agent: LLM-powered query interface (src/pe_agent_refactored.py)"
+echo ""
+echo "🚀 QUICK START:"
+echo "   1. Activate environment: source /workspace/rag_env/bin/activate"
+echo "   2. Run agent: python /workspace/setup/src/pe_agent_refactored.py"
+echo "   3. Ask questions like:"
+echo "      - 'What is the portfolio-level TVPI?'"
+echo "      - 'Show me the top 5 funds by IRR'"
+echo "      - 'Run a 5-year projection for Venture Capital'"
+echo ""
+echo "📖 DOCUMENTATION:"
+echo "   • Architecture: /workspace/setup/README_NEW.md"
+echo "   • Implementation: /workspace/setup/IMPLEMENTATION_SUMMARY.md"
+echo "   • Tests: /workspace/setup/tests/"
+echo ""
+echo "🔧 KEY COMPONENTS:"
+echo "   • PE Metrics Engine: src/engines/pe_metrics_engine.py"
+echo "   • Cash Flow Engine: src/engines/cash_flow_engine.py"
+echo "   • Projection Engine: src/engines/projection_engine.py"
+echo "   • Agent Layer: src/pe_agent_refactored.py"
+echo ""
+echo "════════════════════════════════════════════════════════════════════════"
+echo ""
