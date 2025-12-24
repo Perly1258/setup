@@ -9,26 +9,29 @@
 DROP TABLE IF EXISTS pe_modeling_rules CASCADE;
 CREATE TABLE pe_modeling_rules (
     primary_strategy VARCHAR(50) PRIMARY KEY,
-    expected_moic NUMERIC(5, 2),
-    target_irr_net NUMERIC(5, 4), -- e.g. 0.15 for 15%
-    inv_period_years INTEGER,
-    fund_life_years INTEGER,
-    nav_depreciation_rate NUMERIC(6, 4), -- Initial J-Curve hit
-    nav_depreciation_qtrs INTEGER,
-    description TEXT,
-    rationale TEXT
+    expected_moic_gross_multiple NUMERIC(4, 2) NOT NULL,
+    target_irr_net_percentage NUMERIC(4, 2) NOT NULL, -- Stored as decimal: 0.15 = 15%, 0.22 = 22%
+    investment_period_years INTEGER NOT NULL,
+    fund_life_years INTEGER NOT NULL,
+    nav_initial_qtr_depreciation NUMERIC(5, 4) NOT NULL, -- Initial J-Curve hit
+    nav_initial_depreciation_qtrs INTEGER NOT NULL,
+    j_curve_model_description VARCHAR(50) NOT NULL,
+    modeling_rationale TEXT
 );
 
 -- 2. DATA LOAD (Assumes file is in /workspace/setup/data/ or adjust path)
 -- In a real deployment, use \COPY. For this script, we insert the CSV data directly 
 -- based on the file 'fund_model_assumptions_data.csv' you uploaded.
 INSERT INTO pe_modeling_rules VALUES
-('Venture Capital', 2.75, 0.22, 5, 12, -0.0150, 8, 'Deep Initial Drop', 'High-risk, long-gestation assets.'),
-('Private Equity', 1.85, 0.16, 6, 10, -0.0050, 6, 'Moderate Drop', 'Standard J-Curve dip due to fees.'),
-('Real Estate', 1.60, 0.13, 5, 10, -0.0010, 4, 'Shallow Initial Drop', 'Minimal J-Curve, offset by early income.'),
-('Infrastructure', 1.50, 0.10, 7, 15, -0.0001, 2, 'Negligible Drop', 'Very stable assets.'),
-('Private Credit', 1.35, 0.09, 4, 7, 0.0000, 0, 'No J-Curve (Flat)', 'Primarily debt payments.'),
-('Secondaries', 1.70, 0.14, 2, 8, -0.0030, 3, 'Accelerated Shallow Drop', 'Acquiring mature portfolios.');
+('Venture Capital', 2.75, 0.22, 5, 12, -0.0150, 8, 'Deep Initial Drop', 'High-risk, long-gestation assets. Deep J-Curve expected (-1.5% Qtrly for 8 Qtrs).'),
+('Private Equity', 1.85, 0.16, 6, 10, -0.0050, 6, 'Moderate Drop', 'Standard J-Curve dip due to fees and transaction costs (-0.5% Qtrly for 6 Qtrs).'),
+('Real Estate', 1.60, 0.13, 5, 10, -0.0010, 4, 'Shallow Initial Drop', 'Minimal J-Curve, offset by early income/yield (-0.1% Qtrly for 4 Qtrs).'),
+('Infrastructure', 1.50, 0.10, 7, 15, -0.0001, 2, 'Negligible Drop', 'Very stable assets; virtually no J-Curve (-0.01% Qtrly for 2 Qtrs).'),
+('Private Credit', 1.35, 0.09, 4, 7, 0.0000, 0, 'No J-Curve (Flat)', 'Primarily debt payments; capital is returned quickly, not relying on equity exit.'),
+('Secondaries', 1.70, 0.14, 2, 8, -0.0030, 3, 'Accelerated Shallow Drop', 'Acquiring mature portfolios accelerates distributions and minimizes the initial J-Curve dip.'),
+('Fund of Funds (FoF)', 1.65, 0.13, 5, 12, -0.0040, 5, 'Moderate Drop (Smoothed)', 'Diversification across multiple underlying funds smooths out J-Curve volatility.'),
+('Co-Investment', 1.80, 0.15, 4, 9, -0.0060, 7, 'Lumpy Drop', 'Deployment is tied directly to opportunistic deal flow, leading to more volatile but short-lived initial drops.'),
+('Real Assets', 1.65, 0.11, 5, 15, -0.0015, 4, 'Shallow Drop', 'Tangible assets with periodic yield; stable valuation.');
 
 -- 3. TABLE: FORECAST RESULTS
 -- Stores the output of the simulation so the Agent can query it later.
@@ -77,9 +80,9 @@ RETURNS json AS $$
         return json.dumps({"error": f"No modeling rules found for strategy {p_strategy}"})
     
     rule = rules[0]
-    target_irr_qtrly = (1 + float(rule['target_irr_net']))**(1/4) - 1
+    target_irr_qtrly = (1 + float(rule['target_irr_net_percentage']))**(1/4) - 1
     life_qtrs = rule['fund_life_years'] * 4
-    inv_qtrs = rule['inv_period_years'] * 4
+    inv_qtrs = rule['investment_period_years'] * 4
     
     # 2. Get Current Portfolio State (Actuals)
     # We need: Remaining Commitment (Uncalled) and Current NAV
@@ -133,7 +136,7 @@ RETURNS json AS $$
             # Growth: NAV grows by target IRR (or shrinks by J-Curve depreciation if early)
             growth_factor = target_irr_qtrly
             if age_qtrs <= rule['nav_initial_depreciation_qtrs']:
-                growth_factor = float(rule['nav_depreciation_rate']) # Apply J-Curve hit
+                growth_factor = float(rule['nav_initial_qtr_depreciation']) # Apply J-Curve hit
 
             # Distribution: Depends on (NAV + New Call) & Distribution Rate
             distribution = (nav * (1 + growth_factor) + capital_call) * rd
