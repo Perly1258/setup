@@ -2,12 +2,14 @@
 -- PART 1: INFRASTRUCTURE & DATA LOAD
 -- Filename: private_market_setup.sql
 -- Run this ONCE to build the database and load raw data.
+-- NOTE: Database creation is handled externally by the setup script
 -- =========================================================================
 
--- 1. DATABASE CLEANUP AND CREATION
-DROP DATABASE IF EXISTS private_markets_db; 
-CREATE DATABASE private_markets_db;
-\c private_markets_db; 
+-- 1. DATABASE SETUP
+-- Database 'private_markets_db' should already exist (created by setup script)
+-- If running standalone, create the database first:
+-- CREATE DATABASE private_markets_db;
+-- \c private_markets_db; 
 
 -- 2. TABLE CREATION
 -- A. PE_PORTFOLIO
