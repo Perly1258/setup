@@ -5,7 +5,7 @@
 echo "=== SQL Files Validation Script ==="
 echo ""
 
-SQL_DIR="/home/runner/work/setup/setup/db/setup"
+SQL_DIR="$(dirname "$0")"
 ERRORS=0
 
 # Function to check SQL syntax

@@ -100,9 +100,14 @@ The following CSV files must exist in `/data` directory:
 The `private_market_setup.sql` file assumes the database is created externally. If running standalone, uncomment the database creation commands at the top of the file.
 
 ### PL/Python Extension Error
-Ensure `postgresql-plpython3-16` (or appropriate version) is installed:
+Ensure the PostgreSQL PL/Python extension for your PostgreSQL version is installed. For PostgreSQL 16:
 ```bash
 sudo apt-get install postgresql-plpython3-16
+```
+
+For other versions, replace `16` with your PostgreSQL major version (e.g., `14`, `15`). You can check your version with:
+```bash
+psql --version
 ```
 
 ### Column Not Found Error
