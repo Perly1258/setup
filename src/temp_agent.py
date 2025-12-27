@@ -5,24 +5,11 @@ import re
 import sys
 from sqlalchemy import create_engine, text
 
-# --- COMPATIBILITY IMPORTS (Safe for OpenWebUI) ---
+# --- LangChain v1.x imports (compatible with OpenWebUI) ---
 from langchain_community.llms import Ollama 
 from langchain_community.utilities import SQLDatabase
-
-# FIX: Robust imports for Tool and Agents
-# Try standard locations first, then fallbacks
-try:
-    from langchain.agents import Tool, AgentExecutor, create_react_agent
-except ImportError:
-    try:
-        # Newer LangChain structure
-        from langchain_core.tools import Tool
-        from langchain.agents import AgentExecutor, create_react_agent
-    except ImportError:
-        # Fallback for older/mixed environments
-        from langchain.tools import Tool
-        from langchain.agents import AgentExecutor, create_react_agent
-
+from langchain_core.tools import Tool
+from langchain.agents import AgentExecutor, create_react_agent
 from langchain import hub
 
 # --- JUPYTER SUPPORT ---

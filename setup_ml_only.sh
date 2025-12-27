@@ -60,6 +60,10 @@ sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/private_market_setup.sql
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/rag_annotations.sql
 
+# Setup cache schema for smart caching layer
+echo "Setting up LLM result cache schema..."
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/cache_schema.sql
+
 # MIGRATION NOTE: The following files are NO LONGER executed:
 # - pe_logic_python.sql (replaced by src/engines/pe_metrics_engine.py)
 # - pe_forecast_logic.sql (replaced by src/engines/projection_engine.py)
@@ -88,17 +92,30 @@ pip install --upgrade pip
 echo "Installing core Python packages..."
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
-pip install pypdf pydantic huggingface-hub
+pip install pypdf huggingface-hub
 pip install spyder-kernels numpy matplotlib numpy_financial
 
-# Install Open WebUI first to handle its strict pinning
-pip install open-webui
+# CRITICAL: Install Open WebUI FIRST (0.6.43) to handle its strict pinning
+echo "Installing Open WebUI 0.6.43..."
+pip install open-webui==0.6.43
 
-# Install LlamaIndex and LangChain extensions separately to avoid resolution deadlocks
+# Install LangChain v1.x stack AFTER OpenWebUI to ensure compatibility
+echo "Installing LangChain v1.x stack..."
+pip install langchain==1.2.0 langchain-community==1.2.0 langchain-core>=0.3.0
+pip install langchain-ollama>=0.2.0 langchainhub>=0.1.15
+
+# Install Pydantic v2 (required for LangChain v1.x and OpenWebUI)
+pip install pydantic>=2.0.0
+
+# Install LlamaIndex (compatible with LangChain v1.x)
+echo "Installing LlamaIndex..."
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
             llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf tabulate llama-index \
-            langchain-ollama langchainhub
+            llama-index-readers-file pymupdf tabulate llama-index
+
+# Install caching dependencies
+echo "Installing caching layer dependencies..."
+pip install redis>=5.0.0 alembic>=1.12.0
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:21434}"
