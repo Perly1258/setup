@@ -99,10 +99,10 @@ pip install spyder-kernels numpy matplotlib numpy_financial
 echo "Installing Open WebUI 0.6.43..."
 pip install open-webui==0.6.43
 
-# Install LangChain v1.x stack AFTER OpenWebUI to ensure compatibility
-echo "Installing LangChain v1.x stack..."
-pip install langchain==1.2.0 langchain-community==1.2.0 langchain-core>=0.3.0
-pip install langchain-ollama>=0.2.0 langchainhub>=0.1.15
+# Install LangChain v1 API stack AFTER OpenWebUI to ensure compatibility
+echo "Installing LangChain v1 API stack..."
+pip install "langchain>=0.3.0,<1.0.0" "langchain-community>=0.3.0,<1.0.0" "langchain-core>=0.3.0"
+pip install "langchain-ollama>=0.2.0" "langchainhub>=0.1.15"
 
 # Install Pydantic v2 (required for LangChain v1.x and OpenWebUI)
 pip install pydantic>=2.0.0

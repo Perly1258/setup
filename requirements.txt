@@ -7,10 +7,13 @@
 open-webui==0.6.43
 
 # ============================================================================
-# STEP 2: Install LangChain v1.x stack
+# STEP 2: Install LangChain v1 API-compatible stack
 # ============================================================================
-langchain==1.2.0
-langchain-community==1.2.0
+# Note: LangChain 0.3.x provides the v1 API (langchain-core 0.3+) while
+# maintaining compatibility with AgentExecutor and create_react_agent.
+# LangChain 1.x (1.0+) has deprecated these APIs in favor of LangGraph.
+langchain>=0.3.0,<1.0.0
+langchain-community>=0.3.0,<1.0.0
 langchain-core>=0.3.0
 langchain-ollama>=0.2.0
 langchainhub>=0.1.15

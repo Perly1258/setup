@@ -52,7 +52,7 @@ class CachedResult(Base):
     query_text = Column(Text, nullable=False)
     query_embedding = Column(JSON, nullable=True)  # Stored as JSON array
     result = Column(Text, nullable=False)
-    metadata = Column(JSON, nullable=True)
+    result_metadata = Column(JSON, nullable=True)  # Renamed from 'metadata' to avoid SQLAlchemy conflict
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     expires_at = Column(DateTime, nullable=True, index=True)
     access_count = Column(Integer, default=0, nullable=False)
@@ -285,7 +285,7 @@ class LLMResultCache:
                 expires_at=result.expires_at,
                 access_count=result.access_count,
                 last_accessed_at=result.last_accessed_at,
-                metadata=result.metadata
+                metadata=result.result_metadata
             )
             
             logger.info(f"Cache HIT (exact): {query[:50]}...")
@@ -339,7 +339,7 @@ class LLMResultCache:
                         expires_at=result.expires_at,
                         access_count=result.access_count,
                         last_accessed_at=result.last_accessed_at,
-                        metadata=result.metadata
+                        metadata=result.result_metadata
                     )
                     similarities.append(SemanticSearchResult(entry, similarity))
             
@@ -389,7 +389,7 @@ class LLMResultCache:
                 # Update existing entry
                 existing.result = result
                 existing.query_embedding = embedding
-                existing.metadata = metadata
+                existing.result_metadata = metadata
                 existing.expires_at = expires_at
                 existing.created_at = datetime.utcnow()
                 session.commit()
@@ -402,7 +402,7 @@ class LLMResultCache:
                     expires_at=existing.expires_at,
                     access_count=existing.access_count,
                     last_accessed_at=existing.last_accessed_at,
-                    metadata=existing.metadata
+                    metadata=existing.result_metadata
                 )
             else:
                 # Create new entry
@@ -411,7 +411,7 @@ class LLMResultCache:
                     query_text=query,
                     query_embedding=embedding,
                     result=result,
-                    metadata=metadata,
+                    result_metadata=metadata,
                     expires_at=expires_at
                 )
                 session.add(cached_result)
@@ -425,7 +425,7 @@ class LLMResultCache:
                     expires_at=cached_result.expires_at,
                     access_count=cached_result.access_count,
                     last_accessed_at=cached_result.last_accessed_at,
-                    metadata=cached_result.metadata
+                    metadata=cached_result.result_metadata
                 )
             
             # Enforce max entries limit

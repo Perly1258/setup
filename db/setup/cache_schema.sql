@@ -25,7 +25,7 @@ CREATE TABLE llm_cache (
     query_text TEXT NOT NULL,
     query_embedding JSON,  -- Stored as JSON array of floats
     result TEXT NOT NULL,
-    metadata JSON,  -- Additional metadata (execution time, etc.)
+    result_metadata JSON,  -- Additional metadata (execution time, etc.) - renamed from 'metadata'
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     expires_at TIMESTAMP,
     access_count INTEGER DEFAULT 0 NOT NULL,
@@ -165,7 +165,7 @@ COMMENT ON TABLE llm_cache IS 'Stores cached LLM query results with embeddings f
 COMMENT ON COLUMN llm_cache.query_hash IS 'SHA-256 hash of normalized query text for exact matching';
 COMMENT ON COLUMN llm_cache.query_embedding IS 'Vector embedding of query for semantic similarity search';
 COMMENT ON COLUMN llm_cache.result IS 'Cached LLM response';
-COMMENT ON COLUMN llm_cache.metadata IS 'Additional metadata like execution time, model info, etc.';
+COMMENT ON COLUMN llm_cache.result_metadata IS 'Additional metadata like execution time, model info, etc.';
 COMMENT ON COLUMN llm_cache.expires_at IS 'Expiration timestamp (NULL = never expires)';
 COMMENT ON COLUMN llm_cache.access_count IS 'Number of times this cached result was accessed';
 
