@@ -15,10 +15,10 @@ import json
 from typing import List, Dict, Any
 import re
 
-from langchain_ollama import OllamaLLM
+from langchain_community.llms import Ollama
 from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
-from langchain.tools import tool
+from langchain_core.prompts import PromptTemplate
+from langchain_core.tools import tool
 
 # Import our computation engines and data layer
 from config import LLM_MODEL, OLLAMA_HOST, LLM_TEMPERATURE, LLM_MAX_ITERATIONS, LLM_MAX_EXECUTION_TIME, LOG_LEVEL
@@ -455,7 +455,7 @@ def check_modeling_assumptions(strategy_name: str) -> str:
 # CUSTOM LLM WRAPPER (Clean DeepSeek output)
 # ==============================================================================
 
-class DeepSeekR1Ollama(OllamaLLM):
+class DeepSeekR1Ollama(Ollama):
     """Custom wrapper to clean DeepSeek R1 output."""
     
     def _call(self, prompt: str, stop: List[str] = None, **kwargs: Any) -> str:

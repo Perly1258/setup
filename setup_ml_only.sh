@@ -60,6 +60,10 @@ sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD 'postgres';"
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/private_market_setup.sql
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/rag_annotations.sql
 
+# Setup cache schema for smart caching layer
+echo "Setting up LLM result cache schema..."
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/cache_schema.sql
+
 # MIGRATION NOTE: The following files are NO LONGER executed:
 # - pe_logic_python.sql (replaced by src/engines/pe_metrics_engine.py)
 # - pe_forecast_logic.sql (replaced by src/engines/projection_engine.py)
@@ -85,20 +89,16 @@ fi
 source "$VENV_PATH/bin/activate"
 pip install --upgrade pip
 
-echo "Installing core Python packages..."
+echo "Installing Python packages from requirements.txt..."
+# Note: torch needs special handling for CUDA support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
-pip install pypdf pydantic huggingface-hub
-pip install spyder-kernels numpy matplotlib numpy_financial
 
-# Install Open WebUI first to handle its strict pinning
-pip install open-webui
-
-# Install LlamaIndex and LangChain extensions separately to avoid resolution deadlocks
-pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
-            llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf tabulate llama-index \
-            langchain-ollama langchainhub
+# Install all other packages from requirements.txt
+# Installation order is preserved in requirements.txt:
+# 1. OpenWebUI first (strict dependency pinning)
+# 2. LangChain v1 API stack
+# 3. All other dependencies
+pip install -r /workspace/setup/requirements.txt
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:21434}"

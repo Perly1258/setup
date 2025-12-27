@@ -7,10 +7,10 @@ import ast
 from typing import List, Dict, Any
 import re
 
-from langchain_ollama import OllamaLLM
+from langchain_community.llms import Ollama
 from langchain.agents import AgentExecutor, create_react_agent
-from langchain.prompts import PromptTemplate
-from langchain.tools import tool
+from langchain_core.prompts import PromptTemplate
+from langchain_core.tools import tool
 
 # --- CONFIGURATION ---
 DB_CONFIG = {
@@ -230,7 +230,7 @@ def check_modeling_assumptions(strategy_name: str) -> str:
 # ==============================================================================
 # CUSTOM LLM WRAPPER
 # ==============================================================================
-class DeepSeekR1Ollama(OllamaLLM):
+class DeepSeekR1Ollama(Ollama):
     def _call(self, prompt: str, stop: List[str] = None, **kwargs: Any) -> str:
         response = super()._call(prompt, stop, **kwargs)
         # Remove <think> tags to clean output and help ReAct parser
