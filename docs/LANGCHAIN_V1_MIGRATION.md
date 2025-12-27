@@ -249,30 +249,7 @@ result = agent_executor.invoke({"input": "What is the portfolio TVPI?"})
 output = result['output']
 ```
 
-### Example 2: temp_agent.py (Removing Fallback Imports)
-
-#### ❌ Before (v0.x with fallbacks)
-```python
-# Try/except pattern for compatibility
-try:
-    from langchain.agents import Tool, AgentExecutor, create_react_agent
-except ImportError:
-    try:
-        from langchain_core.tools import Tool
-        from langchain.agents import AgentExecutor, create_react_agent
-    except ImportError:
-        from langchain.tools import Tool
-        from langchain.agents import AgentExecutor, create_react_agent
-```
-
-#### ✅ After (v1.x clean imports)
-```python
-# Direct v1.x imports - no fallbacks needed
-from langchain_core.tools import Tool
-from langchain.agents import AgentExecutor, create_react_agent
-```
-
-### Example 3: Agent Setup and Execution
+### Example 2: Agent Setup and Execution
 
 #### ❌ Before (v0.x)
 ```python

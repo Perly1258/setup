@@ -13,9 +13,9 @@ This document provides a comprehensive audit of all Python files in the reposito
 
 | Status | Count | Files |
 |--------|-------|-------|
-| ✅ Compatible | 5 | Core agent files migrated |
-| ⚠️ Needs Testing | 4 | API server, RAG modules |
-| 🔧 Not Applicable | 3 | Test files, data adapters |
+| ✅ Compatible | 4 | Core agent files migrated |
+| ⚠️ Needs Testing | 1 | PDF RAG module |
+| 🔧 Not Applicable | 3 | Data adapters, engines |
 
 ## File-by-File Status
 
@@ -70,47 +70,6 @@ langchain-core>=0.3.0
 
 ---
 
-#### ✅ `src/temp_agent.py`
-**Status**: COMPATIBLE ✅  
-**Migration Date**: 2025-12-27
-
-**Changes Made**:
-- ✅ Removed try/except fallback imports
-- ✅ Direct v1.x imports: `langchain_core.tools.Tool`
-- ✅ Uses `langchain_community.llms.Ollama`
-- ✅ Agent execution: uses `.invoke()` instead of `.run()`
-
-**Before**:
-```python
-try:
-    from langchain.agents import Tool, AgentExecutor
-except ImportError:
-    try:
-        from langchain_core.tools import Tool
-        from langchain.agents import AgentExecutor
-    except ImportError:
-        from langchain.tools import Tool
-```
-
-**After**:
-```python
-from langchain_core.tools import Tool
-from langchain.agents import AgentExecutor, create_react_agent
-```
-
-**Dependencies**:
-```python
-langchain==1.2.0
-langchain-community==1.2.0
-langchain-core>=0.3.0
-pandas>=2.0.0
-numpy-financial>=1.0.0
-```
-
-**Testing Status**: ⏳ Pending functional testing
-
----
-
 #### ✅ `src/config.py`
 **Status**: COMPATIBLE ✅  
 **Migration Date**: 2025-12-27
@@ -133,80 +92,7 @@ CACHE_EMBEDDING_MODEL = os.getenv("CACHE_EMBEDDING_MODEL", "nomic-embed-text")
 
 ---
 
-### API and Server Files
-
-#### ⚠️ `src/api_server.py`
-**Status**: NEEDS REVIEW ⚠️  
-**Migration Date**: Not yet migrated
-
-**Current Dependencies**:
-- FastAPI
-- Pydantic (should be v2 compatible)
-- pdf_rag_module (needs audit)
-
-**Potential Issues**:
-- May use deprecated LangChain patterns
-- Pydantic models may need v2 migration
-- Import paths may need updating
-
-**Action Required**:
-1. Review import statements
-2. Ensure Pydantic v2 compatibility
-3. Test with OpenWebUI 0.6.43
-4. Add caching layer integration
-
-**Testing Status**: ❌ Not tested
-
----
-
-#### ⚠️ `src/pdf_rag_module.py`
-**Status**: NEEDS REVIEW ⚠️  
-**Migration Date**: Not yet migrated
-
-**Potential Issues**:
-- May use LlamaIndex with old LangChain versions
-- Import paths may need updating
-- Ollama integration may use deprecated patterns
-
-**Action Required**:
-1. Audit LlamaIndex and LangChain imports
-2. Verify compatibility with v1.x
-3. Test RAG functionality
-4. Consider adding caching
-
-**Testing Status**: ❌ Not tested
-
----
-
-#### ⚠️ `src/hybrid_rag_agent.py`
-**Status**: NEEDS REVIEW ⚠️  
-**Migration Date**: Not yet migrated
-
-**Potential Issues**:
-- May mix LangChain and LlamaIndex patterns
-- Agent execution patterns may be outdated
-
-**Action Required**:
-1. Audit for deprecated imports
-2. Update agent execution to `.invoke()`
-3. Test hybrid RAG functionality
-
-**Testing Status**: ❌ Not tested
-
----
-
-#### ⚠️ `src/sql_rag_module.py`
-**Status**: NEEDS REVIEW ⚠️  
-**Migration Date**: Not yet migrated
-
-**Potential Issues**:
-- SQL agent may use deprecated patterns
-- Database utilities may need updates
-
-**Action Required**:
-1. Review SQL agent setup
-2. Update to v1.x patterns
-3. Test with PostgreSQL
+### PDF RAG Module
 
 **Testing Status**: ❌ Not tested
 
@@ -481,13 +367,12 @@ llama-index-embeddings-ollama>=0.1.0
 ## Next Steps
 
 1. **Immediate** (High Priority)
-   - [ ] Test migrated agent files (`pe_agent.py`, `pe_agent_refactored.py`, `temp_agent.py`)
+   - [ ] Test migrated agent files (`pe_agent.py`, `pe_agent_refactored.py`)
    - [ ] Verify caching layer works correctly
    - [ ] Run existing test suite
 
 2. **Short Term** (Medium Priority)
-   - [ ] Audit and migrate `api_server.py`
-   - [ ] Audit and migrate RAG modules
+   - [ ] Test PDF RAG module compatibility
    - [ ] Add unit tests for caching layer
    - [ ] Integration tests for cached agents
 

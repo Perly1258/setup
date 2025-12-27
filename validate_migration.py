@@ -153,8 +153,7 @@ def test_agent_files_syntax():
     
     agent_files = [
         'src/pe_agent.py',
-        'src/pe_agent_refactored.py',
-        'src/temp_agent.py'
+        'src/pe_agent_refactored.py'
     ]
     
     import py_compile
