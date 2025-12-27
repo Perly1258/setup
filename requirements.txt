@@ -2,6 +2,13 @@
 # Installation order matters - install in the order listed
 
 # ============================================================================
+# NOTE: Torch packages require special installation with CUDA support
+# ============================================================================
+# torch, torchvision, torchaudio should be installed separately with:
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# These are listed below but may need manual installation for CUDA support
+
+# ============================================================================
 # STEP 1: Install Open WebUI FIRST (it has strict dependency pinning)
 # ============================================================================
 open-webui==0.6.43

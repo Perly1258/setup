@@ -89,33 +89,16 @@ fi
 source "$VENV_PATH/bin/activate"
 pip install --upgrade pip
 
-echo "Installing core Python packages..."
+echo "Installing Python packages from requirements.txt..."
+# Note: torch needs special handling for CUDA support
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers accelerate ipykernel psycopg2-binary sentence-transformers
-pip install pypdf huggingface-hub
-pip install spyder-kernels numpy matplotlib numpy_financial
 
-# CRITICAL: Install Open WebUI FIRST (0.6.43) to handle its strict pinning
-echo "Installing Open WebUI 0.6.43..."
-pip install open-webui==0.6.43
-
-# Install LangChain v1 API stack AFTER OpenWebUI to ensure compatibility
-echo "Installing LangChain v1 API stack..."
-pip install "langchain>=0.3.0,<1.0.0" "langchain-community>=0.3.0,<1.0.0" "langchain-core>=0.3.0"
-pip install "langchain-ollama>=0.2.0" "langchainhub>=0.1.15"
-
-# Install Pydantic v2 (required for LangChain v1.x and OpenWebUI)
-pip install pydantic>=2.0.0
-
-# Install LlamaIndex (compatible with LangChain v1.x)
-echo "Installing LlamaIndex..."
-pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama \
-            llama-index-vector-stores-postgres sqlalchemy psycopg2-binary \
-            llama-index-readers-file pymupdf tabulate llama-index
-
-# Install caching dependencies
-echo "Installing caching layer dependencies..."
-pip install redis>=5.0.0 alembic>=1.12.0
+# Install all other packages from requirements.txt
+# Installation order is preserved in requirements.txt:
+# 1. OpenWebUI first (strict dependency pinning)
+# 2. LangChain v1 API stack
+# 3. All other dependencies
+pip install -r /workspace/setup/requirements.txt
 
 echo "--- 3. Ollama Model Downloads and Server Start ---"
 export OLLAMA_HOST="${OLLAMA_HOST:-0.0.0.0:21434}"
