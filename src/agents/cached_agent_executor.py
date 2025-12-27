@@ -137,7 +137,7 @@ class CachedAgentExecutor:
                     extra_metadata = self.metadata_extractor(result)
                     metadata.update(extra_metadata)
                 except Exception as e:
-                    logger.warning(f"Metadata extraction failed: {e}")
+                    logger.warning(f"Metadata extraction failed for query '{query[:50]}...': {e}")
             
             self.cache.set(query, output, metadata=metadata)
             logger.info(f"💾 Cached result for: {query[:50]}...")

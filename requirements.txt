@@ -34,7 +34,7 @@ torch>=2.0.0
 accelerate>=0.20.0
 
 # ============================================================================
-# STEP 5: LlamaIndex (compatible with LangChain v1.x)
+# STEP 5: LlamaIndex (compatible with LangChain v1 API)
 # ============================================================================
 llama-index-core>=0.10.0
 llama-index-llms-ollama>=0.1.0
@@ -48,7 +48,6 @@ llama-index>=0.10.0
 # ============================================================================
 fastapi>=0.100.0
 uvicorn>=0.23.0
-pydantic>=2.0.0
 
 # ============================================================================
 # STEP 7: Data processing and visualization

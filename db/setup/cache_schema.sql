@@ -36,6 +36,8 @@ CREATE TABLE llm_cache (
 CREATE INDEX idx_llm_cache_query_hash ON llm_cache(query_hash);
 CREATE INDEX idx_llm_cache_expires_at ON llm_cache(expires_at);
 CREATE INDEX idx_llm_cache_created_at ON llm_cache(created_at);
+-- Compound index for efficient cleanup of expired entries
+CREATE INDEX idx_llm_cache_expires_created ON llm_cache(expires_at, created_at) WHERE expires_at IS NOT NULL;
 
 -- ============================================================================
 -- Table: cache_statistics

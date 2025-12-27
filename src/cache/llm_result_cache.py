@@ -441,9 +441,18 @@ class LLMResultCache:
         if total > self.max_entries:
             to_delete = total - self.max_entries
             # Delete least recently accessed entries
+            # Use CASE to handle NULL values for SQLite compatibility
+            from sqlalchemy import case
+            
             old_entries = (
                 session.query(CachedResult)
-                .order_by(CachedResult.last_accessed_at.nulls_first(), CachedResult.created_at)
+                .order_by(
+                    case(
+                        (CachedResult.last_accessed_at.is_(None), CachedResult.created_at),
+                        else_=CachedResult.last_accessed_at
+                    ),
+                    CachedResult.created_at
+                )
                 .limit(to_delete)
                 .all()
             )
