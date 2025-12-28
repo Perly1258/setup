@@ -261,9 +261,9 @@ def calculate_all_metrics(
         >>> print(f"IRR: {metrics['irr']:.2%}, TVPI: {metrics['tvpi']:.2f}x")
     """
     # Separate calls and distributions
-    paid_in = abs(sum([cf for cf in cash_flows if cf < 0]))
-    distributions = sum([cf for cf in cash_flows if cf > 0])
-    total_value = distributions + current_nav
+    paid_in = abs(sum([float(cf) for cf in cash_flows if cf < 0]))
+    distributions = sum([float(cf) for cf in cash_flows if cf > 0])
+    total_value = distributions + float(current_nav)
     
     # Calculate IRR by treating current NAV as a final (unrealized) distribution
     # This gives the IRR including unrealized gains
@@ -318,10 +318,10 @@ def aggregate_metrics(fund_metrics_list: List[Dict[str, Any]]) -> Dict[str, Any]
         return {}
     
     # Sum up basic values
-    total_paid_in = sum([m.get("paid_in", 0) for m in fund_metrics_list])
-    total_distributions = sum([m.get("distributions", 0) for m in fund_metrics_list])
-    total_nav = sum([m.get("current_nav", 0) for m in fund_metrics_list])
-    total_commitment = sum([m.get("total_commitment", 0) for m in fund_metrics_list])
+    total_paid_in = sum([float(m.get("paid_in", 0) or 0) for m in fund_metrics_list])
+    total_distributions = sum([float(m.get("distributions", 0) or 0) for m in fund_metrics_list])
+    total_nav = sum([float(m.get("current_nav", 0) or 0) for m in fund_metrics_list])
+    total_commitment = sum([float(m.get("total_commitment", 0) or 0) for m in fund_metrics_list])
     total_value = total_distributions + total_nav
     
     # Calculate aggregated metrics

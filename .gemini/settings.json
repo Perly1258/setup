@@ -1,5 +1,9 @@
 {
-  "general": {
-    "previewFeatures": true
-  }
+  {
+    "general": {
+        "previewFeatures": true
+    },
+    "coreTools": ["*"],
+    "excludeTools": []
+}
 }

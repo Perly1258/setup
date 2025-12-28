@@ -55,7 +55,7 @@ def setup_environment_and_engine():
     # 3. CONNECT TO OLLAMA
     try:
         Settings.llm = Ollama(
-            model="mistral", 
+            model="mistral-nemo", 
             base_url=OLLAMA_URL, 
             request_timeout=120.0
         )

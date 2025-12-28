@@ -38,7 +38,7 @@ apt-get remove --purge -y postgresql* || true
 # PL/Python functions. Financial calculations (IRR, TVPI, projections) are now handled
 # by pe_metrics_engine.py, cash_flow_engine.py, and projection_engine.py.
 apt-get install -y --no-install-recommends \
-    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector
+    python3-venv git poppler-utils curl postgresql-16 postgresql-contrib postgresql-16-pgvector libpq-dev
 
 
 sudo service postgresql start

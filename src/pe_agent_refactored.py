@@ -17,13 +17,27 @@ import time
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    print("Error: psycopg2 module not found. Please install it using: pip install psycopg2-binary")
+    sys.exit(1)
 
-from langchain_community.llms import Ollama
-from langchain.agents import AgentExecutor, create_react_agent
-from langchain_core.prompts import PromptTemplate
-from langchain_core.tools import tool
+try:
+    from langchain_community.llms import Ollama
+except ImportError:
+    print("Error: langchain_community module not found. Please install it using: pip install langchain-community")
+    sys.exit(1)
+
+try:
+    from langchain.agents import AgentExecutor, create_react_agent
+    from langchain_core.prompts import PromptTemplate
+    from langchain_core.tools import tool
+except ImportError as e:
+    print(f"Error: langchain module not found or incompatible. Details: {e}")
+    print("Please ensure you have installed: pip install \"langchain>=0.3.0,<1.0.0\" langchain-community langchain-core")
+    sys.exit(1)
 
 # Import our computation engines
 from config import (
@@ -518,6 +532,17 @@ def get_portfolio_overview() -> str:
 def get_strategy_metrics(strategy_name: str) -> str:
     """Get metrics for a PRIMARY STRATEGY (e.g., Venture Capital, Real Estate)."""
     try:
+        # Robust parsing for LLM inputs
+        if isinstance(strategy_name, str) and strategy_name.strip().startswith("{"):
+            try:
+                args = json.loads(strategy_name.replace("'", '"')) # handle single quotes
+                strategy_name = args.get("strategy_name", strategy_name)
+            except json.JSONDecodeError:
+                pass
+        
+        if isinstance(strategy_name, str):
+            strategy_name = strategy_name.strip("'\" ")
+
         db = get_db()
         metrics = calculate_strategy_metrics(db, strategy=strategy_name)
         if not metrics:
@@ -608,6 +633,17 @@ def get_fund_metrics(fund_name: str) -> str:
 def get_historical_j_curve(strategy_name: str) -> str:
     """Get J-Curve data for a strategy."""
     try:
+        # Robust parsing for LLM inputs
+        if isinstance(strategy_name, str) and strategy_name.strip().startswith("{"):
+            try:
+                args = json.loads(strategy_name.replace("'", '"'))
+                strategy_name = args.get("strategy_name", strategy_name)
+            except json.JSONDecodeError:
+                pass
+        
+        if isinstance(strategy_name, str):
+            strategy_name = strategy_name.strip("'\" ")
+            
         db = get_db()
         cash_flows = get_cash_flows(db, strategy=strategy_name)
         if not cash_flows:
@@ -680,14 +716,51 @@ def get_fund_ranking(metric: str = "distributions") -> str:
 def run_forecast_simulation(strategy_name: str, years: int = 5) -> str:
     """Run Takahashi-Alexander model forecast for future cash flows."""
     try:
-        if isinstance(strategy_name, str) and ',' in strategy_name:
-            parts = strategy_name.split(',')
-            strategy_name = parts[0].strip().strip("'"")
-            if len(parts) > 1:
-                years_str = parts[1].strip()
-                years = int(years_str.split('=')[1].strip()) if '=' in years_str else int(years_str)
+        # 1. Handle JSON string input (e.g., from some LLMs passing a single JSON arg)
+        if isinstance(strategy_name, str) and strategy_name.strip().startswith("{"):
+            try:
+                args = json.loads(strategy_name)
+                strategy_name = args.get("strategy_name")
+                years = args.get("years", years)
+            except json.JSONDecodeError:
+                pass
         
-        years = int(years)
+        # 2. Handle key-value string input (e.g., "strategy_name='VC', years=5")
+        if isinstance(strategy_name, str) and ('=' in strategy_name or ',' in strategy_name):
+            # Try to extract strategy name
+            strat_match = re.search(r"strategy_name\s*[:=]\s*['\"]?([^'\",}]+)['\"]?", strategy_name)
+            if strat_match:
+                strategy_name = strat_match.group(1).strip()
+            
+            # Try to extract years
+            years_match = re.search(r"years\s*[:=]\s*(\d+)", strategy_name) # check in original string
+            if years_match:
+                years = int(years_match.group(1))
+            elif isinstance(years, str): # if years was passed as string "years=5"
+                 y_match = re.search(r"(\d+)", years)
+                 if y_match:
+                     years = int(y_match.group(1))
+
+        # 3. Clean up strategy name (remove quotes if present)
+        if isinstance(strategy_name, str):
+            strategy_name = strategy_name.strip("'\" ")
+            
+        # 4. Ensure years is int
+        try:
+            years = int(years)
+        except (ValueError, TypeError):
+             # Fallback if years is still weird, e.g. "{'years': 5}"
+             if isinstance(years, str):
+                 y_match = re.search(r"(\d+)", years)
+                 if y_match:
+                     years = int(y_match.group(1))
+                 else:
+                     years = 5 # Default
+             else:
+                 years = 5
+
+        logger.info(f"Running forecast for: {strategy_name}, Years: {years}")
+        
         num_periods = years * 4
         db = get_db()
         
@@ -731,6 +804,17 @@ def run_forecast_simulation(strategy_name: str, years: int = 5) -> str:
 def check_modeling_assumptions(strategy_name: str) -> str:
     """Check J-Curve assumptions, Target IRR, MOIC expectations."""
     try:
+         # Robust parsing for LLM inputs
+        if isinstance(strategy_name, str) and strategy_name.strip().startswith("{"):
+            try:
+                args = json.loads(strategy_name.replace("'", '"'))
+                strategy_name = args.get("strategy_name", strategy_name)
+            except json.JSONDecodeError:
+                pass
+        
+        if isinstance(strategy_name, str):
+            strategy_name = strategy_name.strip("'\" ")
+            
         db = get_db()
         assumptions = get_modeling_assumptions(db, strategy_name)
         if not assumptions:
@@ -759,19 +843,25 @@ class DeepSeekR1Ollama(Ollama):
     
     def _call(self, prompt: str, stop: List[str] = None, **kwargs: Any) -> str:
         response = super()._call(prompt, stop, **kwargs)
+        # Remove <think> tags to clean output
         cleaned_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
         
+        # Heuristic: If the model gives a direct answer without an Action, wrap it
         if "Action:" not in cleaned_response and "Final Answer:" not in cleaned_response:
+             # Check if it looks like a tool call thinking process
             if "portfolio" in cleaned_response.lower() and ("tvpi" in cleaned_response.lower() or "dpi" in cleaned_response.lower()):
-                return "Thought: I need to get portfolio-level metrics.\nAction: get_portfolio_overview\nAction Input: "
+                 pass # Let it fail or retry, or inject a thought.
             else:
-                return f"Thought: I have the information needed.\nFinal Answer: {cleaned_response}"
-        
+                 return f"Final Answer: {cleaned_response}"
+                 
         if "Action:" in cleaned_response and "Final Answer:" in cleaned_response:
+            # DeepSeek sometimes outputs both. Prefer the Action to keep the loop going.
             action_part = cleaned_response.split("Final Answer:")[0].strip()
             return action_part
-        
+            
         return cleaned_response
+
+
 
 
 # ==============================================================================
@@ -827,11 +917,29 @@ Thought:{agent_scratchpad}"""
     prompt = PromptTemplate.from_template(prompt_template)
     agent = create_react_agent(llm, tools, prompt)
     
+    # Custom parser logic for DeepSeek's chatty nature
+    def deepseek_parsing_error_handler(error):
+        err_msg = str(error)
+        output = ""
+        if "Could not parse LLM output: `" in err_msg:
+             output = err_msg.split("Could not parse LLM output: `")[1].strip("`")
+             
+        # If output contains <think>, strip it
+        clean_output = re.sub(r'<think>.*?</think>', '', output, flags=re.DOTALL).strip()
+        
+        # If it looks like a final answer (just text), return it
+        if "Action:" not in clean_output:
+             # We can't return an AgentFinish object here easily, but we can instruct the model
+             return f"Final Answer: {clean_output}"
+             
+        return "Invalid Format. Please check your output format."
+
     executor = AgentExecutor(
         agent=agent,
         tools=tools,
         verbose=True,
-        handle_parsing_errors="Check your output and make sure it conforms to the format: Action: [tool] \n Action Input: [input]",
+        # handle_parsing_errors=deepseek_parsing_error_handler, # strict handling often fails with DeepSeek
+        handle_parsing_errors=True, # Default handling is safer for now
         max_iterations=LLM_MAX_ITERATIONS,
         max_execution_time=LLM_MAX_EXECUTION_TIME
     )
