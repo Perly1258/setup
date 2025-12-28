@@ -5,37 +5,39 @@ This agent uses pure Python computation engines for all calculations
 and only relies on the LLM for natural language understanding and response formatting.
 
 Architecture:
-- User Query → LLM Agent (routing) → Computation Engines (calculations) → Database (caching)
+- User Query → LLM Agent (routing) → Computation Engines (calculations) → Database (Metrics Storage)
 """
 
 import os
 import sys
 import logging
 import json
-from typing import List, Dict, Any
 import re
+import time
+from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime
+
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from langchain_community.llms import Ollama
 from langchain.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import tool
 
-# Import our computation engines and data layer
-from config import LLM_MODEL, OLLAMA_HOST, LLM_TEMPERATURE, LLM_MAX_ITERATIONS, LLM_MAX_EXECUTION_TIME, LOG_LEVEL
-from data.db_adapter import (
-    DatabaseConnection,
-    get_fund_list,
-    get_cash_flows,
-    calculate_fund_metrics,
-    calculate_strategy_metrics,
-    calculate_portfolio_metrics,
-    get_modeling_assumptions
+# Import our computation engines
+from config import (
+    LLM_MODEL, OLLAMA_HOST, LLM_TEMPERATURE, LLM_MAX_ITERATIONS, LLM_MAX_EXECUTION_TIME, 
+    LOG_LEVEL, DB_CONFIG, ENABLE_CACHING, CACHE_TTL_SECONDS, CACHE_SIMILARITY_THRESHOLD, 
+    CACHE_DB_PATH, CACHE_EMBEDDING_MODEL, CACHE_MAX_ENTRIES
 )
+
 from engines.cash_flow_engine import (
     calculate_j_curve,
     AggregationPeriod,
     generate_cash_flow_summary,
-    calculate_ytd_metrics
+    calculate_ytd_metrics,
+    CashFlow
 )
 from engines.projection_engine import (
     project_cash_flows_takahashi,
@@ -47,6 +49,7 @@ from engines.visualization_engine import (
     prepare_tvpi_evolution_data,
     generate_chart_summary
 )
+from engines.pe_metrics_engine import calculate_all_metrics, aggregate_metrics
 
 # Configure logging
 logging.basicConfig(
@@ -61,6 +64,97 @@ logger = logging.getLogger(__name__)
 # DATABASE CONNECTION (Singleton)
 # ==============================================================================
 
+class DatabaseConnection:
+    """Manages database connection lifecycle."""
+    
+    def __init__(self, config: Dict[str, Any] = None):
+        """
+        Initialize database connection.
+        
+        Args:
+            config: Database configuration dict (defaults to DB_CONFIG from config.py)
+        """
+        self.config = config or DB_CONFIG
+        self.conn = None
+        self._connect()
+        self._ensure_metrics_table()
+    
+    def _connect(self):
+        """Establish database connection."""
+        try:
+            self.conn = psycopg2.connect(**self.config)
+            logger.info("✅ Connected to PostgreSQL database")
+        except Exception as e:
+            logger.error(f"❌ Database connection failed: {e}")
+            self.conn = None
+            
+    def _ensure_metrics_table(self):
+        """Ensure the table for storing calculated metrics exists."""
+        query = """
+        CREATE TABLE IF NOT EXISTS pe_computed_metrics (
+            metric_id SERIAL PRIMARY KEY,
+            calculation_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            hierarchy_level VARCHAR(20) NOT NULL, -- 'PORTFOLIO', 'STRATEGY', 'SUB_STRATEGY', 'FUND'
+            entity_id VARCHAR(100), -- Fund ID (as string) or Strategy Name
+            paid_in NUMERIC,
+            distributions NUMERIC,
+            total_value NUMERIC,
+            current_nav NUMERIC,
+            tvpi NUMERIC,
+            dpi NUMERIC,
+            rvpi NUMERIC,
+            irr NUMERIC,
+            metrics_json JSONB -- Catch-all for extra data
+        );
+        CREATE INDEX IF NOT EXISTS idx_metrics_lookup ON pe_computed_metrics(hierarchy_level, entity_id);
+        CREATE INDEX IF NOT EXISTS idx_metrics_date ON pe_computed_metrics(calculation_date);
+        """
+        self.execute_query(query, fetch="none")
+    
+    def close(self):
+        """Close database connection."""
+        if self.conn:
+            self.conn.close()
+            logger.info("Database connection closed")
+    
+    def execute_query(
+        self,
+        query: str,
+        params: Tuple = None,
+        fetch: str = "all"
+    ) -> Any:
+        """
+        Execute a SQL query.
+        
+        Args:
+            query: SQL query string
+            params: Query parameters
+            fetch: 'all', 'one', or 'none'
+            
+        Returns:
+            Query results based on fetch parameter
+        """
+        if not self.conn:
+            logger.error("No database connection available")
+            return None
+        
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # logger.debug(f"Executing query: {query[:100]}...")
+                cur.execute(query, params or ())
+                
+                if fetch == "all":
+                    return cur.fetchall()
+                elif fetch == "one":
+                    return cur.fetchone()
+                else:  # none
+                    self.conn.commit()
+                    return None
+        except Exception as e:
+            logger.error(f"Query execution error: {e}")
+            self.conn.rollback()
+            return None
+
 # Global database connection
 _db_connection = None
 
@@ -73,23 +167,335 @@ def get_db():
 
 
 # ==============================================================================
+# DATA SAVING / CACHING FUNCTIONS
+# ==============================================================================
+
+def save_computed_metrics(db: DatabaseConnection, metrics: Dict[str, Any]):
+    """Save calculated metrics to the database for future retrieval."""
+    if not metrics:
+        return
+
+    query = """
+        INSERT INTO pe_computed_metrics 
+        (hierarchy_level, entity_id, paid_in, distributions, total_value, current_nav, tvpi, dpi, rvpi, irr, metrics_json)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """
+    
+    # Extract specific fields
+    hierarchy = metrics.get('hierarchy_level', 'UNKNOWN')
+    
+    # Determine entity_id based on hierarchy
+    if hierarchy == 'FUND':
+        entity_id = str(metrics.get('fund_id', ''))
+    elif hierarchy == 'STRATEGY':
+        entity_id = metrics.get('primary_strategy', '')
+    elif hierarchy == 'SUB_STRATEGY':
+        entity_id = metrics.get('sub_strategy', '')
+    else:
+        entity_id = 'PORTFOLIO'
+        
+    params = (
+        hierarchy,
+        entity_id,
+        metrics.get('paid_in'),
+        metrics.get('distributions'),
+        metrics.get('total_value'),
+        metrics.get('current_nav'),
+        metrics.get('tvpi'),
+        metrics.get('dpi'),
+        metrics.get('rvpi'),
+        metrics.get('irr'),
+        json.dumps(metrics, default=str) # store full payload as JSON
+    )
+    
+    db.execute_query(query, params, fetch="none")
+    logger.info(f"💾 Saved computed metrics for {hierarchy}: {entity_id}")
+
+
+# ==============================================================================
+# DATA RETRIEVAL HELPER FUNCTIONS
+# ==============================================================================
+
+def get_fund_list(
+    db: DatabaseConnection,
+    strategy: Optional[str] = None,
+    sub_strategy: Optional[str] = None,
+    is_active: bool = True
+) -> List[Dict[str, Any]]:
+    """Get list of funds with optional filtering."""
+    query = """
+        SELECT 
+            fund_id,
+            fund_name,
+            vintage_year,
+            primary_strategy,
+            sub_strategy,
+            total_commitment_usd as total_commitment,
+            is_active
+        FROM pe_portfolio
+        WHERE 1=1
+    """
+    params = []
+    
+    if is_active is not None: 
+        if is_active is True:
+             query += " AND is_active = %s"
+             params.append(True)
+        
+    if strategy:
+        query += " AND primary_strategy = %s"
+        params.append(strategy)
+    
+    if sub_strategy:
+        query += " AND sub_strategy = %s"
+        params.append(sub_strategy)
+    
+    query += " ORDER BY fund_name"
+    
+    results = db.execute_query(query, tuple(params))
+    return [dict(row) for row in results] if results else []
+
+
+def get_cash_flows(
+    db: DatabaseConnection,
+    fund_id: Optional[int] = None,
+    strategy: Optional[str] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None
+) -> List[CashFlow]:
+    """Get cash flows from database."""
+    query = """
+        SELECT 
+            cf.transaction_id,
+            cf.fund_id,
+            cf.transaction_date,
+            cf.transaction_type,
+            cf.investment_paid_in_usd,
+            cf.management_fees_usd,
+            cf.return_of_cost_distribution_usd,
+            cf.profit_distribution_usd,
+            cf.net_asset_value_usd
+        FROM pe_historical_cash_flows cf
+        LEFT JOIN pe_portfolio p ON cf.fund_id = p.fund_id
+        WHERE 1=1
+    """
+    params = []
+    
+    if fund_id:
+        query += " AND cf.fund_id = %s"
+        params.append(fund_id)
+    
+    if strategy:
+        query += " AND p.primary_strategy = %s"
+        params.append(strategy)
+    
+    if start_date:
+        query += " AND cf.transaction_date >= %s"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND cf.transaction_date <= %s"
+        params.append(end_date)
+    
+    query += " ORDER BY cf.transaction_date"
+    
+    results = db.execute_query(query, tuple(params))
+    
+    if not results:
+        return []
+    
+    cash_flows = []
+    for row in results:
+        # Investment
+        if row['investment_paid_in_usd']:
+            amount = row['investment_paid_in_usd']
+            if amount > 0: amount = -amount
+            cash_flows.append(CashFlow(
+                transaction_id=row['transaction_id'],
+                fund_id=row['fund_id'],
+                date=row['transaction_date'],
+                cf_type='call_investment',
+                amount=amount
+            ))
+        
+        # Fees
+        if row['management_fees_usd']:
+            amount = row['management_fees_usd']
+            if amount > 0: amount = -amount
+            cash_flows.append(CashFlow(
+                transaction_id=row['transaction_id'],
+                fund_id=row['fund_id'],
+                date=row['transaction_date'],
+                cf_type='call_fees',
+                amount=amount
+            ))
+        
+        # Return of capital
+        if row['return_of_cost_distribution_usd']:
+            cash_flows.append(CashFlow(
+                transaction_id=row['transaction_id'],
+                fund_id=row['fund_id'],
+                date=row['transaction_date'],
+                cf_type='distribution_return_of_capital',
+                amount=row['return_of_cost_distribution_usd']
+            ))
+        
+        # Profit
+        if row['profit_distribution_usd']:
+            cash_flows.append(CashFlow(
+                transaction_id=row['transaction_id'],
+                fund_id=row['fund_id'],
+                date=row['transaction_date'],
+                cf_type='distribution_profit',
+                amount=row['profit_distribution_usd']
+            ))
+    
+    return cash_flows
+
+
+def get_latest_nav(db: DatabaseConnection, fund_id: int) -> Optional[float]:
+    """Get the latest NAV for a fund."""
+    query = """
+        SELECT net_asset_value_usd
+        FROM pe_historical_cash_flows
+        WHERE fund_id = %s
+        AND net_asset_value_usd IS NOT NULL
+        ORDER BY transaction_date DESC
+        LIMIT 1
+    """
+    result = db.execute_query(query, (fund_id,), fetch="one")
+    return float(result['net_asset_value_usd']) if result else None
+
+
+def get_modeling_assumptions(db: DatabaseConnection, strategy: str) -> Optional[Dict[str, Any]]:
+    """Get modeling assumptions for a strategy."""
+    query = """
+        SELECT 
+            primary_strategy,
+            expected_moic_gross_multiple as expected_moic,
+            target_irr_net_percentage as target_irr,
+            investment_period_years,
+            fund_life_years,
+            nav_initial_qtr_depreciation,
+            nav_initial_depreciation_qtrs,
+            j_curve_model_description,
+            modeling_rationale
+        FROM pe_modeling_rules
+        WHERE primary_strategy = %s
+    """
+    result = db.execute_query(query, (strategy,), fetch="one")
+    return dict(result) if result else None
+
+
+# ==============================================================================
+# METRIC CALCULATION HELPERS
+# ==============================================================================
+
+def calculate_fund_metrics(db: DatabaseConnection, fund_id: int) -> Optional[Dict[str, Any]]:
+    """Calculate all metrics for a specific fund and save to DB."""
+    # Get fund info
+    fund_query = "SELECT fund_name, vintage_year, primary_strategy, total_commitment_usd FROM pe_portfolio WHERE fund_id = %s"
+    fund_info = db.execute_query(fund_query, (fund_id,), fetch="one")
+    if not fund_info:
+        logger.warning(f"Fund {fund_id} not found")
+        return None
+    
+    cash_flows = get_cash_flows(db, fund_id=fund_id)
+    current_nav = get_latest_nav(db, fund_id) or 0
+    
+    cf_amounts = [cf.amount for cf in cash_flows]
+    cf_dates = [cf.date for cf in cash_flows]
+    
+    metrics = calculate_all_metrics(
+        cash_flows=cf_amounts,
+        dates=cf_dates,
+        total_commitment=float(fund_info['total_commitment_usd']),
+        current_nav=current_nav
+    )
+    
+    metrics.update({
+        "hierarchy_level": "FUND",
+        "fund_id": fund_id,
+        "fund_name": fund_info['fund_name'],
+        "vintage_year": fund_info['vintage_year'],
+        "primary_strategy": fund_info['primary_strategy']
+    })
+    
+    # Save computed metrics to DB
+    save_computed_metrics(db, metrics)
+    
+    return metrics
+
+
+def calculate_strategy_metrics(
+    db: DatabaseConnection,
+    strategy: str,
+    sub_strategy: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Calculate aggregated metrics for a strategy and save to DB."""
+    funds = get_fund_list(db, strategy=strategy, sub_strategy=sub_strategy)
+    
+    if not funds:
+        logger.warning(f"No funds found for strategy: {strategy}")
+        return None
+    
+    fund_metrics = []
+    for fund in funds:
+        metrics = calculate_fund_metrics(db, fund['fund_id'])
+        if metrics:
+            fund_metrics.append(metrics)
+    
+    aggregated = aggregate_metrics(fund_metrics)
+    aggregated.update({
+        "hierarchy_level": "SUB_STRATEGY" if sub_strategy else "STRATEGY",
+        "primary_strategy": strategy,
+        "sub_strategy": sub_strategy
+    })
+    
+    # Save computed metrics to DB
+    save_computed_metrics(db, aggregated)
+    
+    return aggregated
+
+
+def calculate_portfolio_metrics(db: DatabaseConnection) -> Optional[Dict[str, Any]]:
+    """Calculate metrics for entire portfolio and save to DB."""
+    funds = get_fund_list(db, is_active=True)
+    
+    if not funds:
+        logger.warning("No active funds found in portfolio")
+        return None
+    
+    fund_metrics = []
+    for fund in funds:
+        metrics = calculate_fund_metrics(db, fund['fund_id'])
+        if metrics:
+            fund_metrics.append(metrics)
+    
+    aggregated = aggregate_metrics(fund_metrics)
+    aggregated.update({
+        "hierarchy_level": "PORTFOLIO"
+    })
+    
+    # Save computed metrics to DB
+    save_computed_metrics(db, aggregated)
+    
+    return aggregated
+
+
+# ==============================================================================
 # LANGCHAIN TOOLS (Using Computation Engines)
 # ==============================================================================
 
 @tool
-def get_portfolio_overview(dummy_arg: str = "") -> str:
-    """
-    Get AGGREGATE metrics for the ENTIRE portfolio: Total TVPI, DPI, IRR, Paid-In, Distributed.
-    Does NOT provide individual fund data.
-    """
+def get_portfolio_overview() -> str:
+    """Get AGGREGATE metrics for the ENTIRE portfolio: Total TVPI, DPI, IRR, Paid-In, Distributed."""
     try:
         db = get_db()
         metrics = calculate_portfolio_metrics(db)
-        
         if not metrics:
             return json.dumps({"error": "No portfolio data available"})
         
-        # Format for LLM consumption
         response = {
             "hierarchy_level": "PORTFOLIO",
             "total_commitment": metrics.get('total_commitment', 0),
@@ -97,33 +503,23 @@ def get_portfolio_overview(dummy_arg: str = "") -> str:
             "distributions": metrics.get('distributions', 0),
             "current_nav": metrics.get('current_nav', 0),
             "total_value": metrics.get('total_value', 0),
-            "unfunded_commitment": metrics.get('unfunded_commitment', 0),
             "tvpi": metrics.get('tvpi'),
             "dpi": metrics.get('dpi'),
             "rvpi": metrics.get('rvpi'),
-            "called_percent": metrics.get('called_percent'),
-            "distributed_percent": metrics.get('distributed_percent'),
             "fund_count": metrics.get('fund_count', 0)
         }
-        
         logger.info(f"Portfolio metrics calculated: TVPI={response['tvpi']:.2f}x")
         return json.dumps(response)
-        
     except Exception as e:
-        logger.error(f"Error calculating portfolio metrics: {e}")
+        logger.error(f"Error: {e}")
         return json.dumps({"error": str(e)})
-
 
 @tool
 def get_strategy_metrics(strategy_name: str) -> str:
-    """
-    Get metrics for a PRIMARY STRATEGY (e.g., Venture Capital, Real Estate, Private Equity, Infrastructure).
-    Includes aggregated TVPI, DPI, IRR, and all PE metrics for the strategy.
-    """
+    """Get metrics for a PRIMARY STRATEGY (e.g., Venture Capital, Real Estate)."""
     try:
         db = get_db()
         metrics = calculate_strategy_metrics(db, strategy=strategy_name)
-        
         if not metrics:
             return json.dumps({"error": f"No data found for strategy: {strategy_name}"})
         
@@ -137,75 +533,48 @@ def get_strategy_metrics(strategy_name: str) -> str:
             "total_value": metrics.get('total_value', 0),
             "tvpi": metrics.get('tvpi'),
             "dpi": metrics.get('dpi'),
-            "rvpi": metrics.get('rvpi'),
-            "called_percent": metrics.get('called_percent'),
             "fund_count": metrics.get('fund_count', 0)
         }
-        
         logger.info(f"Strategy metrics for {strategy_name}: TVPI={response['tvpi']:.2f}x")
         return json.dumps(response)
-        
     except Exception as e:
-        logger.error(f"Error calculating strategy metrics: {e}")
+        logger.error(f"Error: {e}")
         return json.dumps({"error": str(e)})
-
 
 @tool
 def get_sub_strategy_metrics(sub_strategy_name: str) -> str:
-    """
-    Get metrics for a SUB-STRATEGY (e.g., Growth Equity, Buyout).
-    You need to specify which primary strategy this sub-strategy belongs to.
-    """
+    """Get metrics for a SUB-STRATEGY."""
     try:
         db = get_db()
-        
-        # For sub-strategies, we need to determine the primary strategy
-        # This is a simplified version - in production, we'd extract this from the query
-        # For now, we'll search all strategies
-        
         funds = get_fund_list(db, sub_strategy=sub_strategy_name)
         if not funds:
             return json.dumps({"error": f"No funds found for sub-strategy: {sub_strategy_name}"})
         
-        # Get the primary strategy from the first fund
         primary_strategy = funds[0]['primary_strategy']
-        
         metrics = calculate_strategy_metrics(db, strategy=primary_strategy, sub_strategy=sub_strategy_name)
         
         if not metrics:
-            return json.dumps({"error": f"Could not calculate metrics for sub-strategy: {sub_strategy_name}"})
+            return json.dumps({"error": f"Could not calculate metrics for: {sub_strategy_name}"})
         
         response = {
             "hierarchy_level": "SUB_STRATEGY",
             "primary_strategy": primary_strategy,
             "sub_strategy": sub_strategy_name,
-            "total_commitment": metrics.get('total_commitment', 0),
-            "paid_in": metrics.get('paid_in', 0),
-            "distributions": metrics.get('distributions', 0),
-            "current_nav": metrics.get('current_nav', 0),
             "tvpi": metrics.get('tvpi'),
             "dpi": metrics.get('dpi'),
             "fund_count": metrics.get('fund_count', 0)
         }
-        
         return json.dumps(response)
-        
     except Exception as e:
-        logger.error(f"Error calculating sub-strategy metrics: {e}")
+        logger.error(f"Error: {e}")
         return json.dumps({"error": str(e)})
-
 
 @tool
 def get_fund_metrics(fund_name: str) -> str:
-    """
-    Get performance metrics for a specific FUND by name.
-    Returns TVPI, DPI, IRR, NAV, and all detailed metrics.
-    """
+    """Get performance metrics for a specific FUND by name."""
     try:
         db = get_db()
-        
-        # Find fund by name
-        funds = get_fund_list(db, is_active=None)  # Include all funds
+        funds = get_fund_list(db, is_active=None)
         matching_fund = None
         for fund in funds:
             if fund_name.lower() in fund['fund_name'].lower():
@@ -216,58 +585,35 @@ def get_fund_metrics(fund_name: str) -> str:
             return json.dumps({"error": f"Fund not found: {fund_name}"})
         
         metrics = calculate_fund_metrics(db, matching_fund['fund_id'])
-        
         if not metrics:
             return json.dumps({"error": f"Could not calculate metrics for fund: {fund_name}"})
         
         response = {
             "hierarchy_level": "FUND",
-            "fund_id": metrics.get('fund_id'),
             "fund_name": metrics.get('fund_name'),
             "vintage_year": metrics.get('vintage_year'),
             "primary_strategy": metrics.get('primary_strategy'),
-            "total_commitment": metrics.get('total_commitment', 0),
-            "paid_in": metrics.get('paid_in', 0),
-            "distributions": metrics.get('distributions', 0),
-            "current_nav": metrics.get('current_nav', 0),
-            "total_value": metrics.get('total_value', 0),
-            "unfunded_commitment": metrics.get('unfunded_commitment', 0),
             "tvpi": metrics.get('tvpi'),
             "dpi": metrics.get('dpi'),
-            "rvpi": metrics.get('rvpi'),
-            "irr": metrics.get('irr'),
-            "called_percent": metrics.get('called_percent')
+            "irr": metrics.get('irr')
         }
-        
-        irr_value = response.get('irr')
-        irr_str = f"{irr_value:.2%}" if irr_value is not None else "N/A"
+        irr_str = f"{response['irr']:.2%}" if response['irr'] is not None else "N/A"
         logger.info(f"Fund metrics for {fund_name}: TVPI={response['tvpi']:.2f}x, IRR={irr_str}")
         return json.dumps(response)
-        
     except Exception as e:
-        logger.error(f"Error calculating fund metrics: {e}")
+        logger.error(f"Error: {e}")
         return json.dumps({"error": str(e)})
-
 
 @tool
 def get_historical_j_curve(strategy_name: str) -> str:
-    """
-    Get J-Curve data (yearly cumulative cash flows) for a strategy.
-    Shows the investment curve over time - typically negative initially, then positive.
-    """
+    """Get J-Curve data for a strategy."""
     try:
         db = get_db()
-        
-        # Get cash flows for the strategy
         cash_flows = get_cash_flows(db, strategy=strategy_name)
-        
         if not cash_flows:
             return json.dumps({"error": f"No cash flow data for strategy: {strategy_name}"})
         
-        # Calculate J-Curve
         j_curve_data = calculate_j_curve(cash_flows, AggregationPeriod.YEARLY)
-        
-        # Prepare visualization data
         periods = [item['period'] for item in j_curve_data]
         cumulative_flows = [item['cumulative_flow'] for item in j_curve_data]
         discrete_flows = [item['net_flow'] for item in j_curve_data]
@@ -280,51 +626,39 @@ def get_historical_j_curve(strategy_name: str) -> str:
             "j_curve": j_curve_data,
             "chart_summary": summary
         }
-        
-        logger.info(f"Generated J-Curve for {strategy_name} with {len(j_curve_data)} periods")
         return json.dumps(response)
-        
     except Exception as e:
-        logger.error(f"Error calculating J-Curve: {e}")
+        logger.error(f"Error: {e}")
         return json.dumps({"error": str(e)})
-
 
 @tool
 def get_fund_ranking(metric: str = "distributions") -> str:
-    """
-    Lists the top 5 funds based on a specific metric.
-    Supported metrics: 'distributions', 'paid_in', 'tvpi', 'nav'.
-    """
+    """Lists the top 5 funds based on a specific metric."""
     try:
         db = get_db()
-        
-        # Get all active funds
         funds = get_fund_list(db, is_active=True)
-        
         if not funds:
             return json.dumps({"error": "No active funds found"})
         
-        # Calculate metrics for each fund
         fund_metrics = []
         for fund in funds:
             metrics = calculate_fund_metrics(db, fund['fund_id'])
             if metrics:
                 fund_metrics.append(metrics)
         
-        # Sort by requested metric
         metric_lower = metric.lower()
         if metric_lower in ['distributed', 'distributions']:
-            sorted_funds = sorted(fund_metrics, key=lambda x: x.get('distributions', 0), reverse=True)
+            key_func = lambda x: x.get('distributions', 0)
         elif metric_lower in ['paid', 'paid_in', 'calls']:
-            sorted_funds = sorted(fund_metrics, key=lambda x: x.get('paid_in', 0), reverse=True)
+            key_func = lambda x: x.get('paid_in', 0)
         elif metric_lower == 'tvpi':
-            sorted_funds = sorted(fund_metrics, key=lambda x: x.get('tvpi', 0) or 0, reverse=True)
+            key_func = lambda x: x.get('tvpi', 0) or 0
         elif metric_lower == 'nav':
-            sorted_funds = sorted(fund_metrics, key=lambda x: x.get('current_nav', 0), reverse=True)
+            key_func = lambda x: x.get('current_nav', 0)
         else:
-            sorted_funds = sorted(fund_metrics, key=lambda x: x.get('distributions', 0), reverse=True)
-        
-        # Get top 5
+            key_func = lambda x: x.get('distributions', 0)
+            
+        sorted_funds = sorted(fund_metrics, key=key_func, reverse=True)
         top_5 = sorted_funds[:5]
         
         results = []
@@ -337,49 +671,34 @@ def get_fund_ranking(metric: str = "distributions") -> str:
                 "tvpi": fund.get('tvpi'),
                 "dpi": fund.get('dpi')
             })
-        
-        logger.info(f"Generated top 5 funds by {metric}")
         return json.dumps({"metric": metric, "top_funds": results})
-        
     except Exception as e:
-        logger.error(f"Error ranking funds: {e}")
+        logger.error(f"Error: {e}")
         return json.dumps({"error": str(e)})
-
 
 @tool
 def run_forecast_simulation(strategy_name: str, years: int = 5) -> str:
-    """
-    Run Takahashi-Alexander model forecast for future cash flows.
-    Projects capital calls, distributions, and NAV evolution for the next N years.
-    """
+    """Run Takahashi-Alexander model forecast for future cash flows."""
     try:
-        # Parse parameters if they come as a single string
         if isinstance(strategy_name, str) and ',' in strategy_name:
             parts = strategy_name.split(',')
-            strategy_name = parts[0].strip().strip("'\"")
+            strategy_name = parts[0].strip().strip("'"")
             if len(parts) > 1:
                 years_str = parts[1].strip()
-                if '=' in years_str:
-                    years = int(years_str.split('=')[1].strip())
-                else:
-                    years = int(years_str)
+                years = int(years_str.split('=')[1].strip()) if '=' in years_str else int(years_str)
         
         years = int(years)
-        num_periods = years * 4  # Quarterly projections
-        
+        num_periods = years * 4
         db = get_db()
         
-        # Get modeling assumptions for the strategy
         assumptions = get_modeling_assumptions(db, strategy_name)
         if not assumptions:
             return json.dumps({"error": f"No modeling assumptions found for strategy: {strategy_name}"})
         
-        # Get funds in the strategy
         funds = get_fund_list(db, strategy=strategy_name, is_active=True)
         if not funds:
             return json.dumps({"error": f"No active funds found for strategy: {strategy_name}"})
         
-        # Prepare fund data for projection
         funds_data = []
         for fund in funds:
             metrics = calculate_fund_metrics(db, fund['fund_id'])
@@ -393,41 +712,27 @@ def run_forecast_simulation(strategy_name: str, years: int = 5) -> str:
                     "current_nav": metrics.get('current_nav', 0)
                 })
         
-        # Run portfolio projection
         modeling_assumptions = {strategy_name: assumptions}
         projections = project_portfolio_cash_flows(funds_data, modeling_assumptions, num_periods)
         
-        # Summarize results
         summary = {
             "strategy": strategy_name,
             "projection_years": years,
             "total_projected_calls": sum(projections['total_calls']),
             "total_projected_distributions": sum(projections['total_distributions']),
-            "projected_nav_end": projections['total_nav'][-1] if projections['total_nav'] else 0,
-            "quarterly_data": {
-                "calls": projections['total_calls'][:8],  # First 2 years
-                "distributions": projections['total_distributions'][:8],
-                "nav": projections['total_nav'][:8]
-            }
+            "projected_nav_end": projections['total_nav'][-1] if projections['total_nav'] else 0
         }
-        
-        logger.info(f"Generated {years}-year forecast for {strategy_name}")
         return json.dumps(summary)
-        
     except Exception as e:
         logger.error(f"Error running forecast: {e}")
         return json.dumps({"error": str(e)})
 
-
 @tool
 def check_modeling_assumptions(strategy_name: str) -> str:
-    """
-    Check J-Curve assumptions, Target IRR, MOIC expectations, and Model Rationale for a strategy.
-    """
+    """Check J-Curve assumptions, Target IRR, MOIC expectations."""
     try:
         db = get_db()
         assumptions = get_modeling_assumptions(db, strategy_name)
-        
         if not assumptions:
             return json.dumps({"error": f"No modeling assumptions found for: {strategy_name}"})
         
@@ -437,40 +742,34 @@ def check_modeling_assumptions(strategy_name: str) -> str:
             "target_irr": assumptions.get('target_irr'),
             "investment_period_years": assumptions.get('investment_period_years'),
             "fund_life_years": assumptions.get('fund_life_years'),
-            "j_curve_depreciation_rate": assumptions.get('nav_initial_qtr_depreciation'),
-            "j_curve_depreciation_quarters": assumptions.get('nav_initial_depreciation_qtrs'),
-            "j_curve_model": assumptions.get('j_curve_model_description'),
             "modeling_rationale": assumptions.get('modeling_rationale')
         }
-        
-        logger.info(f"Retrieved modeling assumptions for {strategy_name}")
         return json.dumps(response)
-        
     except Exception as e:
         logger.error(f"Error retrieving assumptions: {e}")
         return json.dumps({"error": str(e)})
 
 
 # ==============================================================================
-# CUSTOM LLM WRAPPER (Clean DeepSeek output)
+# CUSTOM LLM WRAPPER
 # ==============================================================================
 
 class DeepSeekR1Ollama(Ollama):
-    """Custom wrapper to clean DeepSeek R1 output."""
+    """Custom wrapper to clean DeepSeek R1 output and enforce ReAct format."""
     
     def _call(self, prompt: str, stop: List[str] = None, **kwargs: Any) -> str:
         response = super()._call(prompt, stop, **kwargs)
-        
-        # Remove <think> tags
         cleaned_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL).strip()
         
-        # If both Action and Final Answer present, keep only Action
-        if "Action:" in cleaned_response and "Final Answer:" in cleaned_response:
-            cleaned_response = cleaned_response.split("Final Answer:")[0].strip()
-        
-        # Wrap direct answers without Action/Final Answer
         if "Action:" not in cleaned_response and "Final Answer:" not in cleaned_response:
-            return f"Final Answer: {cleaned_response}"
+            if "portfolio" in cleaned_response.lower() and ("tvpi" in cleaned_response.lower() or "dpi" in cleaned_response.lower()):
+                return "Thought: I need to get portfolio-level metrics.\nAction: get_portfolio_overview\nAction Input: "
+            else:
+                return f"Thought: I have the information needed.\nFinal Answer: {cleaned_response}"
+        
+        if "Action:" in cleaned_response and "Final Answer:" in cleaned_response:
+            action_part = cleaned_response.split("Final Answer:")[0].strip()
+            return action_part
         
         return cleaned_response
 
@@ -513,8 +812,8 @@ Use the following format:
 
 Question: the input question you must answer
 Thought: You should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
+Action: one of [{tool_names}] (no parentheses)
+Action Input: JSON for the tool args, e.g. {{'strategy_name': 'Private Equity'}}
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
@@ -528,7 +827,7 @@ Thought:{agent_scratchpad}"""
     prompt = PromptTemplate.from_template(prompt_template)
     agent = create_react_agent(llm, tools, prompt)
     
-    return AgentExecutor(
+    executor = AgentExecutor(
         agent=agent,
         tools=tools,
         verbose=True,
@@ -536,6 +835,8 @@ Thought:{agent_scratchpad}"""
         max_iterations=LLM_MAX_ITERATIONS,
         max_execution_time=LLM_MAX_EXECUTION_TIME
     )
+    
+    return executor
 
 
 # ==============================================================================
@@ -543,13 +844,15 @@ Thought:{agent_scratchpad}"""
 # ==============================================================================
 
 if __name__ == "__main__":
+    user_question = sys.argv[1] if len(sys.argv) > 1 else None
+
     print("\n" + "="*60)
     print(f"🤖 PE Portfolio Agent (Computation-First) | Model: {LLM_MODEL}")
     print("="*60 + "\n")
     
     agent_executor = setup_agent()
     
-    questions = [
+    default_questions = [
         "What is the TVPI and DPI of the entire portfolio?",
         "Which primary strategy has the highest Internal Rate of Return (IRR)?",
         "What is the total Paid-In capital for the 'Private Equity' strategy?",
@@ -558,15 +861,17 @@ if __name__ == "__main__":
         "Run a 5-year forecast for 'Venture Capital' and show me the results.",
         "Why is the J-Curve for Venture Capital so deep? Check the assumptions."
     ]
+
+    questions = [user_question] if user_question else default_questions
     
     for i, question in enumerate(questions, 1):
-        print(f"\n🔹 Q{i}: {question}")
+        print(f"\n└ Q{i}: {question}")
         print("-" * 70)
         try:
             response = agent_executor.invoke({"input": question})
-            print(f"🟢 Answer: {response['output']}")
+            print(f"│ Answer: {response['output']}")
         except Exception as e:
-            print(f"🔴 Error: {e}")
+            print(f" └ Error: {e}")
             logger.error(f"Error processing Q{i}: {e}")
         print("-" * 70)
     

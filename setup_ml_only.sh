@@ -64,6 +64,10 @@ sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f
 echo "Setting up LLM result cache schema..."
 sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/cache_schema.sql
 
+# Setup computed metrics schema for persisting calculation results
+echo "Setting up computed metrics schema..."
+sudo -u postgres PGPASSWORD='postgres' psql -U postgres -d private_markets_db -f /workspace/setup/db/setup/computed_metrics_schema.sql
+
 # MIGRATION NOTE: The following files are NO LONGER executed:
 # - pe_logic_python.sql (replaced by src/engines/pe_metrics_engine.py)
 # - pe_forecast_logic.sql (replaced by src/engines/projection_engine.py)
