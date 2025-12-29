@@ -27,7 +27,7 @@ DB_USER = os.environ.get("POSTGRES_USER", "postgres").strip()
 DB_PASS = os.environ.get("POSTGRES_PASSWORD", "postgres").strip()
 DB_HOST = os.environ.get("DB_HOST", "localhost").strip()
 DB_PORT = os.environ.get("DB_PORT", "5432").strip()
-DB_NAME = "rag_db"
+DB_NAME = os.environ.get("DB_NAME", "rag_db").strip()
 
 # Ollama Config
 # Updated: Changed the default fallback port from 21434 to 9000.

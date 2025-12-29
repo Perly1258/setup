@@ -1,16 +1,18 @@
 #!/bin/bash
 
-# Hardcoded Paths
-VENV_PATH="/workspace/rag_env"
-DATA_DIR="/workspace/setup/webui_data"
-TOOL_SCRIPT="/workspace/setup/rag_retrieval_tool.py"
-REGISTER_SCRIPT="/workspace/setup/register_webui_tool.py"
+# Dynamic Paths
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+VENV_PATH="${VENV_PATH:-/workspace/rag_env}"
+DATA_DIR="${DATA_DIR:-$SCRIPT_DIR/webui_data}"
+TOOL_SCRIPT="${TOOL_SCRIPT:-$SCRIPT_DIR/rag_retrieval_tool.py}"
+REGISTER_SCRIPT="${REGISTER_SCRIPT:-$SCRIPT_DIR/register_webui_tool.py}"
 
 # Hardcoded Env Vars
-export POSTGRES_USER="postgres"
-export POSTGRES_PASSWORD="postgres"
-export DB_HOST="localhost"
-export DB_PORT="5432"
+export POSTGRES_USER="${POSTGRES_USER:-postgres}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
+export DB_HOST="${DB_HOST:-localhost}"
+export DB_PORT="${DB_PORT:-5432}"
+export DB_NAME="${DB_NAME:-rag_db}"
 export OLLAMA_HOST="localhost:21434"
 export DATA_DIR="$DATA_DIR"
 
@@ -34,7 +36,13 @@ RAG_PID=$!
 # Start Frontend (Open WebUI) on 8000
 # EXPLICITLY passing DATA_DIR here guarantees the process receives it
 # ADDED: WEBUI_SECRET_KEY to prevent startup errors or session invalidation
-export WEBUI_SECRET_KEY="t0p-s3cr3t-k3y-fix"
+export WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-t0p-s3cr3t-k3y-fix}"
+export WEBUI_AUTH="${WEBUI_AUTH:-True}"
+export ENABLE_SIGNUP="${ENABLE_SIGNUP:-True}"
+
+# Force Open WebUI to use Postgres instead of SQLite
+export DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}"
+
 DATA_DIR="$DATA_DIR" open-webui serve --host 0.0.0.0 --port 17500 &
 WEBUI_PID=$!
 
